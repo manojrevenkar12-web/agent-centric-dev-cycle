@@ -1,0 +1,22 @@
+{
+ "issues": 22,
+ "blocked_at_preflight": 0,
+ "prs_opened": 21,
+ "merged": 9,
+ "reviewer_acceptance_rate": 0.42857142857142855,
+ "ci_pass_rate": 1,
+ "rework_rate": 0.5714285714285714,
+ "overclaim_rate": 0.8,
+ "self_verified_rate": 1,
+ "handed_over": 12,
+ "cost_usd": 3.1720999999999995,
+ "cost_per_merged_usd": 0.3524555555555555,
+ "median_hours_to_merge": 0.000001388888888888889,
+ "satisfaction": {
+  "mean": null,
+  "responses": 0
+ },
+ "levels": {
+  "agent_reviewed": 21
+ }
+}

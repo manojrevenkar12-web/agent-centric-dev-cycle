@@ -1,0 +1,81 @@
+{
+ "levels": {
+  "human_only": "a person does the work; an agent may only explain or research",
+  "agent_draft": "an agent drafts the change; a person reviews every line before it can merge",
+  "agent_reviewed": "an agent makes the change and verifies it; the owning team reviews as for any PR",
+  "auto_approvable": "low risk: eligible for automated approval once CI and the AI review pass (shadow first)"
+ },
+ "version": 1,
+ "categories": {
+  "docs": {
+   "max_level": "auto_approvable"
+  },
+  "tests": {
+   "max_level": "auto_approvable"
+  },
+  "bugfix": {
+   "max_level": "agent_reviewed"
+  },
+  "refactor": {
+   "max_level": "agent_reviewed"
+  },
+  "feature": {
+   "max_level": "agent_draft"
+  },
+  "dependency": {
+   "max_level": "agent_draft"
+  },
+  "security": {
+   "max_level": "human_only"
+  },
+  "migration": {
+   "max_level": "human_only"
+  }
+ },
+ "forbidden": [
+  ".github/workflows/**",
+  ".github/actions/**",
+  ".github/scripts/**",
+  "OWNERS",
+  "cubic.yaml",
+  "**/.env",
+  "**/.env.*",
+  "packages/@n8n/db/src/migrations/**",
+  "packages/core/src/encryption/**",
+  "packages/cli/src/modules/encryption-key-manager/**",
+  "agent-harness.lock.json"
+ ],
+ "sensitive": {
+  "reviewers": "@n8n-io/iam",
+  "paths": [
+   "packages/cli/src/auth/**",
+   "packages/cli/src/mfa/**",
+   "packages/cli/src/oauth/**",
+   "packages/cli/src/sso.ee/**",
+   "packages/cli/src/permissions.ee/**",
+   "packages/cli/src/license/**",
+   "packages/cli/src/license.ts",
+   "packages/cli/src/credentials/**",
+   "packages/cli/src/credentials-helper.ts",
+   "packages/@n8n/permissions/**",
+   "packages/@n8n/engine/src/auth/**",
+   "packages/@n8n/backend-services/src/credentials/**",
+   "packages/@n8n/backend-services/src/oauth/**",
+   "packages/@n8n/decorators/src/auth-handler/**",
+   "packages/workflow/src/auth-redaction.ts",
+   "packages/workflow/src/credential-domain-restrictions.ts",
+   "packages/@n8n/utils/src/scrub-secrets.ts",
+   "packages/cli/src/services/ai-gateway*.ts",
+   "packages/cli/src/services/free-ai-credits.service.ts"
+  ]
+ },
+ "size": {
+  "max_files_auto": 6,
+  "max_files_reviewed": 25
+ },
+ "risk_tiers": {
+  "low": "auto_approvable",
+  "medium": "agent_reviewed",
+  "high": "agent_draft"
+ }
+}

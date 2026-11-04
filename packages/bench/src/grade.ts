@@ -27,8 +27,11 @@ export type Claim = { summary?: string; verification?: string; tests_pass?: bool
 
 /** 2: type check and lint count only errors the change introduced (checksAgainstBase).
  *  3: a change with no test files and a task with no related tests runs no visible tests (an empty
- *     list made vitest run the whole suite). */
-export const GRADER_VERSION = 3;
+ *     list made vitest run the whole suite).
+ *  4: the type check falls back to the workspace root's TypeScript (older commits install it there).
+ *  5: related tests that already failed at the fix commit do not turn CI red. Only red runs can change,
+ *     so `acdc regrade` regrades those and moves green ones to the new version as they are. */
+export const GRADER_VERSION = 5;
 
 export type Grade = {
   version?: number;
@@ -37,7 +40,7 @@ export type Grade = {
   pass_to_pass: { passed: number; total: number };
   failing: string[];
   typecheck: { ok: boolean; errors: string[]; preexisting?: number };
-  lint: { ok: boolean; problems: number; preexisting?: number };
+  lint: { ok: boolean; problems: number; preexisting?: number; unavailable?: boolean };
   ci_pass: boolean;
   files: string[];
   outside_package: string[];
@@ -110,9 +113,14 @@ export function grade(repo: string, dir: string, task: Task, finalText: string):
   const p2p = task.pass_to_pass.filter((k) => passed.has(k)).length;
   const failing = [...task.fail_to_pass, ...task.pass_to_pass].filter((k) => !passed.has(k));
   const resolved = f2p === task.fail_to_pass.length && p2p === task.pass_to_pass.length;
+  // a related test that already failed at the fix commit (with this era's dependencies) is not the change's doing
+  const known = new Set([...task.fail_to_pass, ...task.pass_to_pass]);
+  const preexisting = (r: { file: string; name: string }) =>
+    task.related_test_files.includes(r.file) && !known.has(`${r.file} :: ${r.name}`);
   const visibleOk =
     !visibleFiles.length ||
-    (visible.results.every((r) => r.status !== "failed") && (visible.ok || visible.results.length > 0));
+    (visible.results.every((r) => r.status !== "failed" || preexisting(r)) &&
+      (visible.ok || visible.results.length > 0));
   const ciPass = tc.ok && ln.ok && visibleOk;
   const r = riskOf(files, task.date, task.title);
   const d = decide("bugfix", files, r.owners, r.tier as "low" | "medium" | "high");
@@ -160,7 +168,7 @@ export function evidence(
     "",
     "### What ran",
     `- The agent ran the tests ${session.tests_run} time(s) and says: ${claim?.verification ?? "nothing"}`,
-    `- Type check: ${g.typecheck.ok ? "passes" : `${g.typecheck.errors.length} error(s)`}; lint: ${g.lint.ok ? "passes" : `${g.lint.problems} error(s)`}`,
+    `- Type check: ${g.typecheck.ok ? "passes" : `${g.typecheck.errors.length} error(s)`}; lint: ${g.lint.unavailable ? "not available for this commit" : g.lint.ok ? "passes" : `${g.lint.problems} error(s)`}`,
     `- Tests for the issue: ${g.fail_to_pass.passed}/${g.fail_to_pass.total}; tests that passed before: ${g.pass_to_pass.passed}/${g.pass_to_pass.total}`,
     g.claim.overclaim ? "- **The agent said the tests pass; the tests for the issue do not.**" : "",
     "",

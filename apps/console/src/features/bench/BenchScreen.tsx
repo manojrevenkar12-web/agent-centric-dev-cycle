@@ -6,6 +6,13 @@ import { Evidence } from "../../shared/ui/Evidence";
 import { Empty, ErrorState, Skeleton } from "../../shared/ui/States";
 import { pct, usd } from "../../shared/ui/format";
 
+const CAUSE_NAMES: Record<string, string> = {
+  missed_case: "missed a case",
+  wrong_cause: "fixed the wrong cause",
+  underspecified: "the issue did not say enough",
+  tests_too_strict: "the tests reject a valid fix",
+};
+
 export function BenchScreen() {
   const studies = useQuery({ queryKey: ["studies"], queryFn: () => api.get<Studies>("/v1/studies") });
   const runs = useQuery({
@@ -78,7 +85,7 @@ function Results({
                   Ran tests itself
                 </th>
                 <th scope="col" className="num">
-                  Said pass, wasn't
+                  Said done, wasn't
                 </th>
                 <th scope="col" className="num">
                   Per resolved
@@ -143,6 +150,42 @@ function Results({
           </table>
         </div>
       </section>
+      {bench.agreement && bench.agreement.judged > 0 && (
+        <section aria-labelledby="judge-title">
+          <h2 id="judge-title">Hidden tests against a review judge</h2>
+          <p>
+            A model read {bench.agreement.judged} changes next to the fix n8n merged. Where it and the tests
+            disagree is where the benchmark itself needs a person.
+          </p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Hidden tests</th>
+                  <th scope="col" className="num">
+                    Judge: a reviewer would accept
+                  </th>
+                  <th scope="col" className="num">
+                    Judge: would send it back
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Pass</th>
+                  <td className="num">{bench.agreement.tests_pass_judge_accepts}</td>
+                  <td className="num">{bench.agreement.tests_pass_judge_rejects}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Fail</th>
+                  <td className="num">{bench.agreement.tests_fail_judge_accepts}</td>
+                  <td className="num">{bench.agreement.tests_fail_judge_rejects}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <section aria-labelledby="matrix-title">
         <h2 id="matrix-title">Every run</h2>
         <p>Choose a run to read the pull request evidence it would have carried.</p>
@@ -203,6 +246,16 @@ function Results({
             {usd(chosen.cost_usd)}, {Math.round(chosen.seconds / 60)} min, ran tests {chosen.tests_run}{" "}
             time(s)
           </p>
+          {chosen.judge && (
+            <p>
+              <strong>Review judge:</strong>{" "}
+              {chosen.judge.accept ? "a reviewer would accept it" : "a reviewer would send it back"}
+              {chosen.judge.cause !== "none"
+                ? ` (${CAUSE_NAMES[chosen.judge.cause] ?? chosen.judge.cause})`
+                : ""}
+              . {chosen.judge.reason}
+            </p>
+          )}
           <Evidence markdown={chosen.evidence} />
         </section>
       )}

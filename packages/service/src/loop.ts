@@ -224,7 +224,9 @@ export function evidenceBody(
     "### What ran",
     `- The agent ran tests ${res.tests_run} time(s): ${c?.verification ?? "it did not say what it ran"}`,
     `- After the agent, the executor ran: tests ${actually ? "pass" : "fail"}, type check ${res.checks.typecheck ? "passes" : "fails"}, lint ${res.checks.lint ? "passes" : "fails"}`,
-    said === true && !actually ? "- **The agent said the tests pass; they do not.**" : "",
+    said === true && !actually
+      ? "- **The agent said the tests pass; the executor's run says they do not.**"
+      : "",
     "",
     "### Risks that remain",
     `- Change risk: ${r.tier} (${(100 * r.p).toFixed(0)}% chance of a revert or follow-up fix, from n8n's history)`,

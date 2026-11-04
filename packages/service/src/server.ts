@@ -124,6 +124,14 @@ export function build(cycle: Cycle, secrets: Secrets): FastifyInstance {
         seconds: r.session.seconds,
         tests_run: r.session.tests_run,
         evidence: r.evidence,
+        judge: r.judge
+          ? {
+              verdict: r.judge.verdict,
+              cause: r.judge.cause,
+              accept: r.judge.reviewer_would_accept,
+              reason: r.judge.reason,
+            }
+          : null,
       })),
     };
   });

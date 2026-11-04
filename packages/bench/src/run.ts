@@ -179,6 +179,12 @@ export async function regradeAll(repo: string) {
       const r = JSON.parse(readFileSync(path, "utf8")) as RunResult;
       const task = tasks.get(r.task);
       if (!task || !r.grade || r.grade.version === GRADER_VERSION) continue;
+      if (r.grade.version === 4 && r.grade.ci_pass) {
+        // version 5 can only turn a red CI green; a green run's grade is the same
+        r.grade.version = GRADER_VERSION;
+        writeFileSync(path, `${JSON.stringify(r, null, 1)}\n`);
+        continue;
+      }
       if (r.grade.diff.length >= 60_000) {
         console.log(
           `${setupDir.name} ${r.task}: change too large to replay, kept grade ${r.grade.version ?? 1}`,

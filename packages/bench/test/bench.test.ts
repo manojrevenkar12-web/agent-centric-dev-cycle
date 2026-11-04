@@ -120,7 +120,7 @@ describe("agent session", () => {
     expect(t).toContain(`cd "${work}/packages/workflow"`);
     expect(t).toContain("env -i");
     expect(t).toContain("--project default --project legacy-engine --reporter");
-    expect(readFileSync(join(bin, "acdc-typecheck"), "utf8")).toContain("tsc --noEmit");
+    expect(readFileSync(join(bin, "acdc-typecheck"), "utf8")).toContain(`"$tsc" --noEmit`);
     expect(readFileSync(join(bin, "acdc-lint"), "utf8")).toContain(
       "/work/n8n/packages/workflow/oxlint.config.mts",
     );

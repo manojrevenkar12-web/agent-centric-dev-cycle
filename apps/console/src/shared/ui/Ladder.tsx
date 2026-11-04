@@ -44,9 +44,13 @@ export function Ladder({
               )}
             </span>
             <span className="rung-name">{levelName(level)}</span>
-            <span className="rung-bar" aria-hidden="true">
-              {r?.share !== undefined && <span style={{ width: `${Math.max(1, 100 * r.share)}%` }} />}
-            </span>
+            {r?.share !== undefined ? (
+              <span className="rung-bar" aria-hidden="true">
+                <span style={{ width: `${Math.max(1, 100 * r.share)}%` }} />
+              </span>
+            ) : (
+              <span aria-hidden="true" />
+            )}
             <span className="rung-note">{r?.note ?? ""}</span>
           </li>
         );

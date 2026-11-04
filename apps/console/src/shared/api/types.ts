@@ -95,6 +95,13 @@ export type BenchReport = {
     only_without: number;
     p_value: number;
   }[];
+  agreement?: {
+    judged: number;
+    tests_pass_judge_accepts: number;
+    tests_pass_judge_rejects: number;
+    tests_fail_judge_accepts: number;
+    tests_fail_judge_rejects: number;
+  };
 };
 export type Studies = {
   risk: RiskReport | null;
@@ -114,4 +121,5 @@ export type BenchRun = {
   seconds: number;
   tests_run: number;
   evidence: string;
+  judge: { verdict: string; cause: string; accept: boolean; reason: string } | null;
 };

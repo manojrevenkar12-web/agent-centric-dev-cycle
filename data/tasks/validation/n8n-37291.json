@@ -1,4 +1,4 @@
 {
  "id": "n8n-37291",
- "rejected": "no tests ran after the fix: packages/workflow/test/type-validation.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc-work/validate-n8n-37291/packages/workflow/src/errors/base/base.error.ts"
+ "rejected": "no tests ran after the fix: packages/workflow/test/type-validation.test.ts: Transform failed with 1 error:\n\n\u001b[31m[TSCONFIG_ERROR] Error:\u001b[0m Failed to load tsconfig for 'test/setup-vm-evaluator.ts': Tsconfig not found\n"
 }

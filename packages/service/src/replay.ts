@@ -55,14 +55,14 @@ export async function replay(store: Store, setup: string) {
   const tracker: Tracker = { comment: async () => {} };
   const current = { run: null as BenchRun | null };
   const executor = {
-    run: async (_i: unknown, o: { branch: string }): Promise<ExecResult> => {
+    run: async (_i: unknown, o: { branch: string; attempt: number }): Promise<ExecResult> => {
       const r = current.run as BenchRun;
       const g = r.grade;
       return {
         ok: r.session.ok && !!g?.files.length,
         branch: o.branch,
         files: g?.files ?? [],
-        cost_usd: r.session.cost_usd,
+        cost_usd: o.attempt === 1 ? r.session.cost_usd : 0, // a rework replays the same change at no cost
         tests_run: r.session.tests_run,
         checks: { tests: !!g?.resolved, typecheck: !!g?.typecheck.ok, lint: !!g?.lint.ok },
         claim: lastJson(r.session.result),

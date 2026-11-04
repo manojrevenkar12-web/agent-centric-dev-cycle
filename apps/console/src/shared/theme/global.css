@@ -145,6 +145,10 @@ section + section {
 .runs a[aria-current="true"] {
   background: var(--accent-soft);
 }
+.runs .level {
+  align-self: start;
+  justify-self: end;
+}
 .runs .key {
   font-family: var(--mono);
   color: var(--muted);
@@ -415,9 +419,10 @@ input[type="text"] {
 
 @media (max-width: 900px) {
   .shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .rail {
+    min-width: 0;
     border-right: 0;
     border-bottom: var(--rule) solid var(--line);
     padding: var(--s3) var(--s4);
@@ -452,4 +457,8 @@ input[type="text"] {
     grid-template-columns: 1fr;
     gap: 0;
   }
+}
+.table-wrap + p,
+.paths + p {
+  margin-top: var(--s3);
 }

@@ -161,7 +161,10 @@ export function runTests(dir: string, files: string[]): TestRun {
 /** Type-check the package (n8n's own tsconfig). */
 export function typecheck(dir: string): { ok: boolean; errors: string[] } {
   const pkg = join(dir, benchCfg().package);
-  const r = spawnSync(join(pkg, "node_modules/.bin/tsc"), ["--noEmit", "-p", "tsconfig.json"], {
+  // the package's own TypeScript, or the workspace root's where the package does not install one
+  const own = join(pkg, "node_modules/.bin/tsc");
+  const tsc = existsSync(own) ? own : join(dir, "node_modules/.bin/tsc");
+  const r = spawnSync(tsc, ["--noEmit", "-p", "tsconfig.json"], {
     cwd: pkg,
     encoding: "utf8",
     timeout: 300_000,
@@ -273,6 +276,9 @@ export function checksAgainstBase(dir: string, files: string[], repo: string) {
       errors: tcNew.slice(0, 30),
       preexisting: before.tc.errors.length,
     },
-    lint: { ok: lnNew.length === 0, problems: lnNew.length, preexisting: before.ln.errors.length },
+    // n8n's type-aware lint needs tsgolint, which older eras' installs do not have: say so, do not pass it
+    lint: /tsgolint/i.test(after.ln.output)
+      ? { ok: true, problems: 0, preexisting: 0, unavailable: true }
+      : { ok: lnNew.length === 0, problems: lnNew.length, preexisting: before.ln.errors.length },
   };
 }

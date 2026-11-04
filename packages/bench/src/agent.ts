@@ -67,7 +67,9 @@ exec env -i PATH="$PATH" HOME=/tmp ${own}/node_modules/.bin/oxlint -c ${own}/oxl
     "acdc-typecheck": `#!/bin/sh
 # Type-check the package. Usage: acdc-typecheck
 cd "${pkg}" || exit 2
-exec env -i PATH="$PATH" HOME=/tmp ./node_modules/.bin/tsc --noEmit -p tsconfig.json
+tsc=./node_modules/.bin/tsc
+[ -x "$tsc" ] || tsc="${checkoutDir}/node_modules/.bin/tsc"
+exec env -i PATH="$PATH" HOME=/tmp "$tsc" --noEmit -p tsconfig.json
 `,
   };
   for (const [name, body] of Object.entries(scripts)) {

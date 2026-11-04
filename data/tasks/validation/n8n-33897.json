@@ -1,4 +1,40 @@
 {
  "id": "n8n-33897",
- "rejected": "no tests ran after the fix: packages/workflow/test/errors/execution-base.error.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc-work/validate-n8n-33897/packages/workflow/src/errors/base/base.error.ts\npackages/workflow/test/errors/workflow-activation.error.test.ts: Cannot find package 'callsites' importe"
+ "pr": 33897,
+ "sha": "fffa4233b358b479e8ea4a244b398924f2271ae4",
+ "base": "3bc2292c7800e590f550055a8ef0b92191f8c326",
+ "date": "2026-07-11T18:34:50+01:00",
+ "title": "fix(core): Construct execution errors correctly when Error.prototype is frozen (#33897)",
+ "statement": "",
+ "source_files": [
+  "packages/workflow/src/errors/abstract/execution-base.error.ts",
+  "packages/workflow/src/errors/workflow-activation.error.ts"
+ ],
+ "source_lines": 21,
+ "test_files": [
+  "packages/workflow/test/errors/execution-base.error.test.ts",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts"
+ ],
+ "related_test_files": [],
+ "fail_to_pass": [
+  "packages/workflow/test/errors/execution-base.error.test.ts :: ExecutionBaseError with a frozen Error.prototype should construct and set name without writing through the prototype",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError with a frozen Error.prototype should wrap an ExecutionBaseError cause without writing through the prototype"
+ ],
+ "pass_to_pass": [
+  "packages/workflow/test/errors/execution-base.error.test.ts :: ExecutionBaseError should set name to the concrete class name",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should default to `error` level",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` based on arg",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `ETIMEDOUT`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `ECONNREFUSED`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `EAUTH`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `Temporary authentication failure`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `Invalid credentials`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should surface the cause message in `description`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should prefer the cause's own `description` over its message"
+ ],
+ "validation": {
+  "base_failed": 2,
+  "fix_passed": 12,
+  "seconds": 12
+ }
 }

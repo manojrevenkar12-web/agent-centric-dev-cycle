@@ -212,7 +212,9 @@ describe.skipIf(!URL)("the loop on PostgreSQL", () => {
   it("flags an agent that says the tests pass when they do not", async () => {
     exec.result = () => ({ checks: { tests: false, typecheck: true, lint: true } });
     await cycle.onIssue(issue());
-    expect(host.prs[0]?.body).toContain("The agent said the tests pass; they do not.");
+    expect(host.prs[0]?.body).toContain(
+      "The agent said the tests pass; the executor's run says they do not.",
+    );
   });
 
   it("computes acceptance, CI, rework, cost and satisfaction from events", async () => {

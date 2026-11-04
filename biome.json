@@ -8,6 +8,7 @@
       "data/**",
       "runs/**",
       "reports/**",
+      "config/risk-model.json",
       "**/dist/**",
       "**/node_modules/**",
       "apps/console/e2e/fixtures/**",

@@ -1,0 +1,257 @@
+{
+  "tasks": 22,
+  "spent_usd": 16.713081690000003,
+  "per": [
+    {
+      "setup": "sonnet-repo",
+      "model": "sonnet",
+      "context": "repo",
+      "runs": 22,
+      "resolved": 9,
+      "resolved_rate": 0.4090909090909091,
+      "resolved_ci95": [
+        0.23255559668820378,
+        0.6126552261710619
+      ],
+      "ci_pass_rate": 1,
+      "mergeable_rate": 0.4090909090909091,
+      "self_verified_rate": 0.9545454545454546,
+      "overclaim_rate": 0.5909090909090909,
+      "outside_package": 0,
+      "added_tests_rate": 0.9545454545454546,
+      "lines_vs_reference": 2.142857142857143,
+      "errors": 0,
+      "denials": 9,
+      "cost_usd": 3.1721352,
+      "cost_per_resolved_usd": 0.35245946666666667,
+      "median_seconds": 84,
+      "judged": 21,
+      "judge_accept_rate": 0.47619047619047616,
+      "failure_causes": {
+        "missed_case": 9,
+        "underspecified": 2,
+        "wrong_cause": 1
+      },
+      "infra_reruns": 0,
+      "levels": {
+        "agent_reviewed": 22
+      }
+    },
+    {
+      "setup": "sonnet-bare",
+      "model": "sonnet",
+      "context": "bare",
+      "runs": 22,
+      "resolved": 10,
+      "resolved_rate": 0.45454545454545453,
+      "resolved_ci95": [
+        0.26920014432004846,
+        0.6534052671095845
+      ],
+      "ci_pass_rate": 1,
+      "mergeable_rate": 0.45454545454545453,
+      "self_verified_rate": 0.9545454545454546,
+      "overclaim_rate": 0.5,
+      "outside_package": 0,
+      "added_tests_rate": 0.9545454545454546,
+      "lines_vs_reference": 1.7647058823529411,
+      "errors": 0,
+      "denials": 19,
+      "cost_usd": 3.2572411,
+      "cost_per_resolved_usd": 0.32572411,
+      "median_seconds": 71,
+      "judged": 21,
+      "judge_accept_rate": 0.47619047619047616,
+      "failure_causes": {
+        "missed_case": 9,
+        "tests_too_strict": 1,
+        "wrong_cause": 1
+      },
+      "infra_reruns": 0,
+      "levels": {
+        "agent_reviewed": 22
+      }
+    },
+    {
+      "setup": "haiku-repo",
+      "model": "haiku",
+      "context": "repo",
+      "runs": 22,
+      "resolved": 7,
+      "resolved_rate": 0.3181818181818182,
+      "resolved_ci95": [
+        0.1636038735469248,
+        0.5268177721716065
+      ],
+      "ci_pass_rate": 0.9545454545454546,
+      "mergeable_rate": 0.3181818181818182,
+      "self_verified_rate": 0.8636363636363636,
+      "overclaim_rate": 0.3181818181818182,
+      "outside_package": 0,
+      "added_tests_rate": 0.8636363636363636,
+      "lines_vs_reference": 2.235294117647059,
+      "errors": 0,
+      "denials": 34,
+      "cost_usd": 0.46243759999999995,
+      "cost_per_resolved_usd": 0.06606251428571427,
+      "median_seconds": 101,
+      "judged": 19,
+      "judge_accept_rate": 0.42105263157894735,
+      "failure_causes": {
+        "missed_case": 8,
+        "underspecified": 1,
+        "wrong_cause": 2,
+        "tests_too_strict": 1
+      },
+      "infra_reruns": 0,
+      "levels": {
+        "agent_reviewed": 22
+      }
+    },
+    {
+      "setup": "opus-repo",
+      "model": "opus",
+      "context": "repo",
+      "runs": 22,
+      "resolved": 7,
+      "resolved_rate": 0.3181818181818182,
+      "resolved_ci95": [
+        0.1636038735469248,
+        0.5268177721716065
+      ],
+      "ci_pass_rate": 0.9545454545454546,
+      "mergeable_rate": 0.3181818181818182,
+      "self_verified_rate": 1,
+      "overclaim_rate": 0.5,
+      "outside_package": 0,
+      "added_tests_rate": 1,
+      "lines_vs_reference": 2.7906976744186047,
+      "errors": 0,
+      "denials": 21,
+      "cost_usd": 8.5511664,
+      "cost_per_resolved_usd": 1.2215951999999999,
+      "median_seconds": 100,
+      "judged": 21,
+      "judge_accept_rate": 0.47619047619047616,
+      "failure_causes": {
+        "missed_case": 10,
+        "underspecified": 1,
+        "wrong_cause": 1,
+        "tests_too_strict": 2
+      },
+      "infra_reruns": 0,
+      "levels": {
+        "agent_reviewed": 22
+      }
+    }
+  ],
+  "paired": [
+    {
+      "model": "sonnet",
+      "tasks": 22,
+      "only_with_agents_md": 0,
+      "only_without": 1,
+      "p_value": 1
+    }
+  ],
+  "agreement": {
+    "judged": 82,
+    "tests_pass_judge_accepts": 29,
+    "tests_pass_judge_rejects": 4,
+    "tests_fail_judge_accepts": 9,
+    "tests_fail_judge_rejects": 40,
+    "judge_cost_usd": 1.0240004000000003
+  },
+  "unsolved": [
+    {
+      "task": "n8n-21534",
+      "causes": [
+        "missed_case",
+        "missed_case",
+        "missed_case",
+        "missed_case"
+      ]
+    },
+    {
+      "task": "n8n-24717",
+      "causes": [
+        "underspecified",
+        "underspecified",
+        "tests_too_strict",
+        "underspecified"
+      ]
+    },
+    {
+      "task": "n8n-25040",
+      "causes": [
+        "unjudged",
+        "missed_case",
+        "unjudged",
+        "unjudged"
+      ]
+    },
+    {
+      "task": "n8n-31681",
+      "causes": [
+        "missed_case",
+        "missed_case",
+        "missed_case",
+        "missed_case"
+      ]
+    },
+    {
+      "task": "n8n-40099",
+      "causes": [
+        "unjudged",
+        "missed_case",
+        "missed_case",
+        "missed_case"
+      ]
+    },
+    {
+      "task": "n8n-41079",
+      "causes": [
+        "missed_case",
+        "missed_case",
+        "missed_case",
+        "missed_case"
+      ]
+    },
+    {
+      "task": "n8n-41083",
+      "causes": [
+        "wrong_cause",
+        "tests_too_strict",
+        "wrong_cause",
+        "missed_case"
+      ]
+    },
+    {
+      "task": "n8n-41395",
+      "causes": [
+        "missed_case",
+        "missed_case",
+        "missed_case",
+        "underspecified"
+      ]
+    },
+    {
+      "task": "n8n-41840",
+      "causes": [
+        "missed_case",
+        "missed_case",
+        "missed_case",
+        "missed_case"
+      ]
+    },
+    {
+      "task": "n8n-42923",
+      "causes": [
+        "missed_case",
+        "missed_case",
+        "missed_case",
+        "missed_case"
+      ]
+    }
+  ]
+}

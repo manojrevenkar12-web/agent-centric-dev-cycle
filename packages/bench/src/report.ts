@@ -141,7 +141,7 @@ export function writeReport() {
     "",
     `## Benchmark: ${tasks.length} real n8n fixes, each setup once`,
     "",
-    "| Setup | Runs | Resolved | 95% CI | CI green | Mergeable | Ran tests itself | Said pass, wasn't | Cost | Cost per resolved |",
+    "| Setup | Runs | Resolved | 95% CI | CI green | Mergeable | Ran tests itself | Said done, wasn't | Cost | Cost per resolved |",
     "|---|---|---|---|---|---|---|---|---|---|",
     ...s.per.map(
       (p) =>
