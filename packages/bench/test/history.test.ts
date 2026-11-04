@@ -90,7 +90,7 @@ describe("the study on n8n's committed history", () => {
 
   it("splits by time and beats the size-and-tests rule on the later months", () => {
     expect(report.data.merged_changes).toBeGreaterThan(10_000);
-    expect(report.data.test.from >= "2026-09-01").toBe(true);
+    expect((report.data.test.from ?? "") >= "2026-09-01").toBe(true);
     expect(report.test.auc).toBeGreaterThan(report.test.auc_naive_rule + 0.1);
     for (const s of report.test.shadow) expect(s.model.rate).toBeLessThan(s.naive_rule.rate);
   });

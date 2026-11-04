@@ -53,7 +53,7 @@ type RiskCfg = {
   high_tier_share: number;
 };
 
-export function fileHistory(changes: Labelled[]): FileHistory {
+export function fileHistory(changes: Pick<Labelled, "type" | "date" | "files">[]): FileHistory {
   const fixes = new Map<string, number[]>();
   for (const c of changes) {
     if (c.type !== "fix") continue;

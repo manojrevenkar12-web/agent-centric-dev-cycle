@@ -1,0 +1,25 @@
+# The loop service: Linear issue -> agent run -> evidence-backed PR -> review -> merge.
+trigger_label: agent            # an issue enters the loop when it carries this label
+max_rework: 2                   # review rounds an agent may answer before a person takes over
+branch_prefix: acdc/
+concurrency: 1                  # agent runs at a time per service instance
+model: sonnet
+budget_per_run_usd: 1.50
+timeout_s: 1500
+# Linear labels -> task category in config/safety.yaml (first match wins; no match is a feature)
+categories:
+  security: security
+  migration: migration
+  bug: bugfix
+  docs: docs
+  documentation: docs
+  tests: tests
+  test: tests
+  refactor: refactor
+  dependencies: dependency
+  feature: feature
+github:
+  repo: n8n-io/n8n
+  base: master
+linear:
+  api: https://api.linear.app/graphql

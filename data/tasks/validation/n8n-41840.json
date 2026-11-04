@@ -1,0 +1,41 @@
+{
+ "id": "n8n-41840",
+ "pr": 41840,
+ "sha": "51cfef891095ffdfd9dccf92b05ac4b3db59a0e9",
+ "base": "14e79fa897628cd8865caafb67697e91f515f7e5",
+ "date": "2026-10-23T09:14:34+00:00",
+ "title": "fix(core): Do not report activation errors for credentials that need reconnecting (#41840)",
+ "statement": "",
+ "source_files": [
+  "packages/workflow/src/errors/workflow-activation.error.ts"
+ ],
+ "source_lines": 24,
+ "test_files": [
+  "packages/workflow/test/errors/workflow-activation.error.test.ts"
+ ],
+ "related_test_files": [],
+ "fail_to_pass": [
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when the cause declares credential-invalid",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when an error wrapped by the cause declares credential-invalid",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when the cause declares configuration-invalid"
+ ],
+ "pass_to_pass": [
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should default to `error` level",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` based on arg",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `ETIMEDOUT`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `ECONNREFUSED`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `EAUTH`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `Temporary authentication failure`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should set `level` to `warning` for `Invalid credentials`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should surface the cause message in `description`",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError should prefer the cause's own `description` over its message",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should keep level error for a node error cause without a declared failure",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should keep level error when the cause declares node-defect",
+  "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError with a frozen Error.prototype should wrap an ExecutionBaseError cause without writing through the prototype"
+ ],
+ "validation": {
+  "base_failed": 3,
+  "fix_passed": 15,
+  "seconds": 4
+ }
+}

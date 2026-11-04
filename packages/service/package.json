@@ -7,9 +7,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "start": "tsx src/main.ts"
   },
   "dependencies": {
-    "@acdc/core": "workspace:*"
+    "@acdc/core": "workspace:*",
+    "@acdc/bench": "workspace:*"
   }
 }

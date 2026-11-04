@@ -5,7 +5,7 @@ sparse: [packages/workflow, patches]
 # vitest projects to run. The isolated-vm engine project needs a native module the sandbox does not build.
 projects: [default, legacy-engine, quickjs-engine]
 work_dir: /home/claude/acdc-work
-test_timeout_s: 900
+test_timeout_s: 600
 network_isolation: true        # tests run in a new user and network namespace (unshare)
 
 mining:

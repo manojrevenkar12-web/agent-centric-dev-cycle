@@ -34,7 +34,8 @@ export function checkout(repo: string, sha: string, name: string): string {
   const dir = join(cfg.work_dir, name);
   remove(repo, dir);
   mkdirSync(dirname(dir), { recursive: true });
-  git(repo, ["worktree", "add", "--detach", "--no-checkout", dir, sha]);
+  git(repo, ["worktree", "prune"]);
+  git(repo, ["worktree", "add", "-f", "--detach", "--no-checkout", dir, sha]);
   git(dir, ["sparse-checkout", "set", "--cone", ...cfg.sparse]);
   git(dir, ["checkout", "--quiet", sha]);
   for (const nm of ["node_modules", join(cfg.package, "node_modules")]) {

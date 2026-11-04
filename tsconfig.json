@@ -1,4 +1,9 @@
 {
-  "files": [],
-  "references": [{ "path": "packages/core" }, { "path": "packages/bench" }, { "path": "packages/service" }]
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "rootDir": "."
+  },
+  "include": ["packages/*/src", "packages/*/test", "vitest.config.ts"]
 }

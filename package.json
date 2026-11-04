@@ -9,7 +9,7 @@
   "scripts": {
     "acdc": "tsx packages/bench/src/cli.ts",
     "test": "vitest run",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -p tsconfig.json",
     "lint": "biome check .",
     "format": "biome format --write ."
   },

@@ -40,7 +40,12 @@ async function main(cmd: string | undefined, args: string[]) {
     }
     case "owners-check": {
       const { ownersCheck } = await import("./owners-check.js");
-      console.log(JSON.stringify(await ownersCheck(need()), null, 1));
+      const r = await ownersCheck(need());
+      const { writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { ROOT } = await import("@acdc/core");
+      writeFileSync(join(ROOT, "reports/owners-check.json"), `${JSON.stringify(r, null, 2)}\n`);
+      console.log(JSON.stringify(r, null, 1));
       return;
     }
     case "tasks": {

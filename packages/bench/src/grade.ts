@@ -21,7 +21,7 @@ import {
 import { readDataset } from "./dataset.js";
 import { fileHistory } from "./risk-train.js";
 import { applyFiles, benchCfg, changedFiles, diff, lint, runTests, typecheck } from "./sandbox.js";
-import type { Task } from "./tasks.js";
+import { type Task, passing } from "./tasks.js";
 
 export type Claim = { summary?: string; verification?: string; tests_pass?: boolean; risks?: string[] };
 
@@ -98,9 +98,7 @@ export function grade(repo: string, dir: string, task: Task, finalText: string):
   ]);
   applyFiles(repo, dir, task.sha, task.test_files); // the hidden tests replace whatever the agent wrote there
   const hidden = runTests(dir, [...task.test_files, ...task.related_test_files]);
-  const passed = new Set(
-    hidden.results.filter((r) => r.status === "passed").map((r) => `${r.file} :: ${r.name}`),
-  );
+  const passed = new Set(passing(hidden.results));
   const f2p = task.fail_to_pass.filter((k) => passed.has(k)).length;
   const p2p = task.pass_to_pass.filter((k) => passed.has(k)).length;
   const failing = [...task.fail_to_pass, ...task.pass_to_pass].filter((k) => !passed.has(k));

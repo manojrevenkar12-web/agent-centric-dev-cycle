@@ -1,0 +1,110 @@
+/* Design tokens. Every colour, size, space and duration in the console comes from here.
+ * The four autonomy levels have their own colours; each passes WCAG AA as text on --panel and as a
+ * fill behind --on-level text, in both themes. */
+:root {
+  --paper: #f4f5f9;
+  --panel: #ffffff;
+  --ink: #1b1f3b;
+  --ink-2: #3a3f5c;
+  --muted: #5a6078;
+  --line: #d9dce8;
+  --line-strong: #a9aec4;
+  --accent: #3346d3;
+  --accent-ink: #ffffff;
+  --accent-soft: #e8ebff;
+  --bad: #b42318;
+  --bad-soft: #fdeceb;
+  --good: #146c43;
+  --focus: #3346d3;
+
+  --level-human: #5b6075;
+  --level-draft: #9a4a07;
+  --level-reviewed: #0d6a63;
+  --level-auto: #19703a;
+  --level-human-soft: #eceef3;
+  --level-draft-soft: #fdf0e3;
+  --level-reviewed-soft: #e2f3f1;
+  --level-auto-soft: #e4f4e9;
+  --on-level: #ffffff;
+
+  --font: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+  --fs-xs: 0.75rem;
+  --fs-s: 0.8125rem;
+  --fs-m: 0.9375rem;
+  --fs-l: 1.125rem;
+  --fs-xl: 1.5rem;
+  --fs-xxl: 2.25rem;
+  --lh: 1.5;
+  --lh-tight: 1.2;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --radius-s: 4px;
+  --radius-m: 8px;
+  --rule: 1px;
+  --rail: 208px;
+  --list-width: 380px;
+  --content-max: 1200px;
+  --row-min: 52px;
+  --rung-height: 64px;
+  --measure: 68ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12142a;
+    --panel: #1a1d36;
+    --ink: #e9eaf4;
+    --ink-2: #c9cbe0;
+    --muted: #a3a7c2;
+    --line: #2e3254;
+    --line-strong: #4a4f78;
+    --accent: #9fadff;
+    --accent-ink: #12142a;
+    --accent-soft: #262b55;
+    --bad: #ff9b8f;
+    --bad-soft: #3a1f2a;
+    --good: #7fd8a4;
+    --focus: #9fadff;
+    --level-human: #b8bccf;
+    --level-draft: #f5b26b;
+    --level-reviewed: #6fd3c9;
+    --level-auto: #8ad9a3;
+    --level-human-soft: #262a45;
+    --level-draft-soft: #3a2a1c;
+    --level-reviewed-soft: #17332f;
+    --level-auto-soft: #1a3324;
+    --on-level: #12142a;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12142a;
+  --panel: #1a1d36;
+  --ink: #e9eaf4;
+  --ink-2: #c9cbe0;
+  --muted: #a3a7c2;
+  --line: #2e3254;
+  --line-strong: #4a4f78;
+  --accent: #9fadff;
+  --accent-ink: #12142a;
+  --accent-soft: #262b55;
+  --bad: #ff9b8f;
+  --bad-soft: #3a1f2a;
+  --good: #7fd8a4;
+  --focus: #9fadff;
+  --level-human: #b8bccf;
+  --level-draft: #f5b26b;
+  --level-reviewed: #6fd3c9;
+  --level-auto: #8ad9a3;
+  --level-human-soft: #262a45;
+  --level-draft-soft: #3a2a1c;
+  --level-reviewed-soft: #17332f;
+  --level-auto-soft: #1a3324;
+  --on-level: #12142a;
+}

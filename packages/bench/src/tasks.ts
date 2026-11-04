@@ -4,8 +4,8 @@
  * agent is never graded on the environment.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { ROOT, isTestFile, loadConfig } from "@acdc/core";
 import { type TestResult, applyFiles, benchCfg, checkout, remove, runTests } from "./sandbox.js";
 
@@ -93,7 +93,8 @@ export function relatedTests(repo: string, sha: string, source: string[], hidden
   const cfg = benchCfg();
   const testFiles = git(repo, ["ls-tree", "-r", "--name-only", sha, `${cfg.package}/test/`])
     .split("\n")
-    .filter((f) => f.endsWith(".test.ts") && !hidden.includes(f));
+    // fuzz and corpus suites take minutes each and test the whole engine, not the change
+    .filter((f) => f.endsWith(".test.ts") && !hidden.includes(f) && !/fuzz|corpus/.test(f));
   const mods = source.map((f) => basename(f).replace(/\.ts$/, "")).filter((m) => m !== "index");
   const hits: string[] = [];
   for (const f of testFiles) {
@@ -110,6 +111,13 @@ export function relatedTests(repo: string, sha: string, source: string[], hidden
 
 const key = (r: TestResult) => `${r.file} :: ${r.name}`;
 
+/** Tests that passed everywhere they ran: an engine test runs once per engine project, and a failure in
+ * any project is a failure. */
+export function passing(results: TestResult[]): string[] {
+  const failed = new Set(results.filter((r) => r.status === "failed").map(key));
+  return [...new Set(results.filter((r) => r.status === "passed").map(key))].filter((k) => !failed.has(k));
+}
+
 export function validate(repo: string, c: Candidate): Task | { id: string; rejected: string } {
   const id = `n8n-${c.pr}`;
   const base = git(repo, ["rev-parse", `${c.sha}^`]).trim();
@@ -120,8 +128,8 @@ export function validate(repo: string, c: Candidate): Task | { id: string; rejec
     const before = runTests(dir, [...c.tests, ...related]);
     applyFiles(repo, dir, c.sha, c.source);
     const after = runTests(dir, [...c.tests, ...related]);
-    const passedBefore = new Set(before.results.filter((r) => r.status === "passed").map(key));
-    const passedAfter = after.results.filter((r) => r.status === "passed").map(key);
+    const passedBefore = new Set(passing(before.results));
+    const passedAfter = passing(after.results);
     const f2p = passedAfter.filter((k) => !passedBefore.has(k));
     const p2p = passedAfter.filter((k) => passedBefore.has(k));
     if (!after.results.length)
@@ -162,7 +170,18 @@ export async function mineTasks(repo: string, args: string[]) {
   const rejected: { id: string; title: string; rejected: string }[] = [];
   for (const c of cands) {
     if (tasks.length >= want) break;
-    const r = validate(repo, c);
+    const cache = join(ROOT, "data/tasks/validation", `n8n-${c.pr}.json`);
+    let r: Task | { id: string; rejected: string };
+    if (existsSync(cache)) r = JSON.parse(readFileSync(cache, "utf8"));
+    else {
+      r = validate(repo, c);
+      mkdirSync(dirname(cache), { recursive: true });
+      writeFileSync(cache, `${JSON.stringify(r, null, 1)}\n`);
+    }
+    if (!("rejected" in r)) {
+      r.fail_to_pass = [...new Set(r.fail_to_pass)];
+      r.pass_to_pass = [...new Set(r.pass_to_pass)].filter((k) => !r.fail_to_pass.includes(k));
+    }
     if ("rejected" in r) rejected.push({ id: r.id, title: c.title, rejected: r.rejected });
     else tasks.push(r);
     console.log(`${"rejected" in r ? "✗" : "✓"} ${c.title}${"rejected" in r ? ` — ${r.rejected}` : ""}`);

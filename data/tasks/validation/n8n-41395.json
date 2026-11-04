@@ -1,0 +1,42 @@
+{
+ "id": "n8n-41395",
+ "pr": 41395,
+ "sha": "618fd7e272b92921db661f12f42b9329697113af",
+ "base": "2b65576b78978125f48379912463bf85ad3c7b73",
+ "date": "2026-10-20T10:01:37+00:00",
+ "title": "fix(core): Ignore counts of tokens when provider omits input / output tokens (#41395)",
+ "statement": "",
+ "source_files": [
+  "packages/workflow/src/metadata-utils.ts"
+ ],
+ "source_lines": 8,
+ "test_files": [
+  "packages/workflow/test/metadata-utils.test.ts"
+ ],
+ "related_test_files": [],
+ "fail_to_pass": [
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore undefined and keep the previous total",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore NaN and keep the previous total",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore Infinity and keep the previous total",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore a negative count and keep the previous total",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should accumulate a later valid call from the last usable total",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should keep a valid side when the other side is not usable",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should replace a stored NaN total with the next usable count"
+ ],
+ "pass_to_pass": [
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should set token usage when no previous metadata exists",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should accumulate tokens across multiple calls",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should preserve existing metadata fields",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils parseMetadataFromError should return undefined if error does not have response or both keys on the object",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils parseMetadataFromError should return undefined if errorResponse only has workflowId key",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils parseMetadataFromError should return undefined if error only has executionId key",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils parseMetadataFromError should support executionId and workflowId key directly on the error object",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils parseMetadataFromError should return undefined if error response does not have subworkflow data",
+  "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils parseMetadataFromError should return metadata if error response has subworkflow data"
+ ],
+ "validation": {
+  "base_failed": 7,
+  "fix_passed": 16,
+  "seconds": 4
+ }
+}

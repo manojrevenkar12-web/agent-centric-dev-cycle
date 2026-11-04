@@ -1,0 +1,59 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: acdc
+          POSTGRES_PASSWORD: acdc
+          POSTGRES_DB: acdc_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acdc" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ACDC_TEST_DATABASE_URL: postgres://acdc:acdc@localhost:5432/acdc_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - name: Unit, history study and service tests
+        run: pnpm test
+      - name: The committed reports are what the code produces
+        run: |
+          pnpm acdc risk > /dev/null
+          pnpm acdc report > /dev/null
+          git diff --exit-code -- reports config/risk-model.json
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
