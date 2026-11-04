@@ -7,12 +7,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadConfig } from "@acdc/core";
+import { isTestFile, loadConfig } from "@acdc/core";
 
 export type BenchCfg = {
   package: string; // the package under test, e.g. packages/workflow
   sparse: string[];
-  projects: string[]; // vitest projects to run (the isolated-vm project needs a native build)
+  skip_projects: string[]; // vitest projects not run (the isolated-vm engine needs a native build)
+  envs: { from: string; dir: string }[]; // installed dependency trees by era; "" is the repository itself
   work_dir: string;
   test_timeout_s: number;
   network_isolation: boolean;
@@ -28,7 +29,18 @@ const git = (repo: string, args: string[], input?: string) =>
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-/** A fresh sparse worktree at `sha`; dependencies come from the main checkout's install. */
+/** The installed dependencies that fit a commit: the newest environment installed at or before it.
+ * Dependencies change over months (a package removed, a test runner upgraded), so one install cannot
+ * run the whole history; validation shows which tasks an environment can run. */
+export function envFor(repo: string, sha: string): string {
+  const date = git(repo, ["show", "-s", "--format=%cI", sha]).trim();
+  const envs = [...benchCfg().envs].sort((a, b) => a.from.localeCompare(b.from));
+  let dir = repo;
+  for (const e of envs) if (e.from <= date) dir = e.dir || repo;
+  return dir;
+}
+
+/** A fresh sparse worktree at `sha`, with the dependencies of its era linked in. */
 export function checkout(repo: string, sha: string, name: string): string {
   const cfg = benchCfg();
   const dir = join(cfg.work_dir, name);
@@ -38,11 +50,23 @@ export function checkout(repo: string, sha: string, name: string): string {
   git(repo, ["worktree", "add", "-f", "--detach", "--no-checkout", dir, sha]);
   git(dir, ["sparse-checkout", "set", "--cone", ...cfg.sparse]);
   git(dir, ["checkout", "--quiet", sha]);
+  const env = envFor(repo, sha);
   for (const nm of ["node_modules", join(cfg.package, "node_modules")]) {
-    const target = join(repo, nm);
+    const target = join(env, nm);
     if (existsSync(target) && !existsSync(join(dir, nm))) symlinkSync(target, join(dir, nm));
   }
   return dir;
+}
+
+/** The vitest projects the checkout's own config defines, less the ones we cannot run. */
+export function projectsFor(dir: string): string[] {
+  const cfg = benchCfg();
+  const text = readFileSync(join(dir, cfg.package, "vitest.config.ts"), "utf8");
+  const names = [
+    ...[...text.matchAll(/name:\s*['"]([\w-]+)['"]/g)].map((m) => m[1] as string),
+    ...[...text.matchAll(/engineProject\(\s*['"](\w+)['"]\s*\)/g)].map((m) => `${m[1]}-engine`),
+  ];
+  return [...new Set(names)].filter((n) => !cfg.skip_projects.includes(n));
 }
 
 export function remove(repo: string, dir: string) {
@@ -81,6 +105,7 @@ const isolate = (cmd: string[]) =>
 
 /** Run vitest on some test files without network and return per-test results. */
 export function runTests(dir: string, files: string[]): TestRun {
+  if (!files.length) throw new Error("runTests needs test files: without them vitest runs the whole suite");
   const cfg = benchCfg();
   const pkg = join(dir, cfg.package);
   const out = join(dir, ".acdc-vitest.json");
@@ -90,7 +115,7 @@ export function runTests(dir: string, files: string[]): TestRun {
   const [bin, ...args] = isolate([
     join(pkg, "node_modules/.bin/vitest"),
     "run",
-    ...cfg.projects.flatMap((p) => ["--project", p]),
+    ...projectsFor(dir).flatMap((p) => ["--project", p]),
     "--reporter=json",
     `--outputFile=${out}`,
     "--passWithNoTests",
@@ -143,18 +168,25 @@ export function typecheck(dir: string): { ok: boolean; errors: string[] } {
     env: { PATH: process.env.PATH ?? "", HOME: "/tmp" },
   });
   const errors = `${r.stdout}${r.stderr}`.split("\n").filter((l) => /error TS\d+/.test(l));
-  return { ok: r.status === 0, errors: errors.slice(0, 30) };
+  return { ok: r.status === 0, errors: errors.slice(0, 300) };
 }
 
 /** Lint the changed files with n8n's oxlint config. */
-export function lint(dir: string, files: string[]): { ok: boolean; problems: number; output: string } {
+/** Lint the changed files with n8n's oxlint config, as installed in the main checkout (`repo`): older
+ * environments do not have the linter's plugins built, and today's rules apply to every setup alike. */
+export function lint(
+  dir: string,
+  files: string[],
+  repo: string,
+): { ok: boolean; problems: number; output: string; errors: string[] } {
   const cfg = benchCfg();
   const pkg = join(dir, cfg.package);
-  const rel = files
+  const abs = files
     .filter((f) => f.startsWith(`${cfg.package}/`) && f.endsWith(".ts"))
-    .map((f) => f.replace(`${cfg.package}/`, ""));
-  if (!rel.length) return { ok: true, problems: 0, output: "" };
-  const r = spawnSync(join(pkg, "node_modules/.bin/oxlint"), ["-c", "oxlint.config.mts", ...rel], {
+    .map((f) => join(dir, f));
+  if (!abs.length) return { ok: true, problems: 0, output: "", errors: [] };
+  const own = join(repo, cfg.package);
+  const r = spawnSync(join(own, "node_modules/.bin/oxlint"), ["-c", join(own, "oxlint.config.mts"), ...abs], {
     cwd: pkg,
     encoding: "utf8",
     timeout: 120_000,
@@ -162,7 +194,16 @@ export function lint(dir: string, files: string[]): { ok: boolean; problems: num
   });
   const out = `${r.stdout}${r.stderr}`;
   const problems = out.split("\n").filter((l) => /: error /.test(l)).length;
-  return { ok: r.status === 0 && problems === 0, problems: problems || (r.status === 0 ? 0 : 1), output: out.slice(-2000) };
+  const errors = out
+    .split("\n")
+    .filter((l) => /: error /.test(l))
+    .map((l) => l.replace(`${dir}/`, ""));
+  return {
+    ok: r.status === 0 && problems === 0,
+    problems: problems || (r.status === 0 ? 0 : 1),
+    output: out.slice(-2000),
+    errors,
+  };
 }
 
 /** What changed in the checkout against its commit (tracked and new files, excluding our own files). */
@@ -186,4 +227,52 @@ export function diff(dir: string): string {
     ":(exclude)node_modules",
     ":(exclude)**/node_modules",
   ]);
+}
+
+/** An error without its position, so the same error before and after an edit compares equal. */
+export const errorKey = (e: string) => e.replace(/\(\d+,\d+\)/, "").replace(/:\d+:\d+:/, ":");
+
+/** Type check and lint with the change, and the same checks on the commit it started from: only errors
+ * the change introduced count against it. Some old commits do not type-check against today's
+ * dependencies, and an agent is not graded on that. */
+export function checksAgainstBase(dir: string, files: string[], repo: string) {
+  const src = files.filter((f) => !isTestFile(f));
+  const after = { tc: typecheck(dir), ln: lint(dir, src, repo) };
+  const saved = new Map(files.map((f) => [f, existsSync(join(dir, f)) ? readFileSync(join(dir, f)) : null]));
+  for (const f of files) {
+    try {
+      writeFileSync(join(dir, f), git(dir, ["show", `HEAD:${f}`]));
+    } catch {
+      rmSync(join(dir, f), { force: true }); // new in the change
+    }
+  }
+  const before = {
+    tc: typecheck(dir),
+    ln: lint(
+      dir,
+      src.filter((f) => existsSync(join(dir, f))),
+      repo,
+    ),
+  };
+  for (const [f, c] of saved) {
+    if (c === null) rmSync(join(dir, f), { force: true });
+    else {
+      mkdirSync(dirname(join(dir, f)), { recursive: true });
+      writeFileSync(join(dir, f), c);
+    }
+  }
+  const fresh = (a: string[], b: string[]) => {
+    const old = new Set(b.map(errorKey));
+    return a.filter((e) => !old.has(errorKey(e)));
+  };
+  const tcNew = fresh(after.tc.errors, before.tc.errors);
+  const lnNew = fresh(after.ln.errors, before.ln.errors);
+  return {
+    typecheck: {
+      ok: tcNew.length === 0 && (after.tc.ok || after.tc.errors.length > 0),
+      errors: tcNew.slice(0, 30),
+      preexisting: before.tc.errors.length,
+    },
+    lint: { ok: lnNew.length === 0, problems: lnNew.length, preexisting: before.ln.errors.length },
+  };
 }

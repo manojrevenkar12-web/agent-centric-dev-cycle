@@ -66,6 +66,18 @@ export function summarise(runs: RunResult[], setups: Setup[]) {
       cost_usd: cost,
       cost_per_resolved_usd: resolved ? cost / resolved : null,
       median_seconds: median(rs.map((r) => r.session.seconds)),
+      judged: k((r) => !!r.judge),
+      judge_accept_rate: k((r) => !!r.judge)
+        ? k((r) => !!r.judge?.reviewer_would_accept) / k((r) => !!r.judge)
+        : null,
+      failure_causes: rs
+        .filter((r) => r.judge && !r.grade?.resolved)
+        .reduce<Record<string, number>>((m, r) => {
+          const c = r.judge?.cause ?? "none";
+          m[c] = (m[c] ?? 0) + 1;
+          return m;
+        }, {}),
+      infra_reruns: k((r) => !!r.infra_retry),
       levels: rs.reduce<Record<string, number>>((m, r) => {
         const l = r.grade?.policy.level ?? "none";
         m[l] = (m[l] ?? 0) + 1;
@@ -93,7 +105,23 @@ export function summarise(runs: RunResult[], setups: Setup[]) {
       },
     ];
   });
-  return { per, paired };
+  // hidden tests against the judge: where they disagree is where the benchmark itself needs review
+  const j = runs.filter((r) => r.judge && r.grade);
+  const agreement = {
+    judged: j.length,
+    tests_pass_judge_accepts: j.filter((r) => r.grade?.resolved && r.judge?.reviewer_would_accept).length,
+    tests_pass_judge_rejects: j.filter((r) => r.grade?.resolved && !r.judge?.reviewer_would_accept).length,
+    tests_fail_judge_accepts: j.filter((r) => !r.grade?.resolved && r.judge?.reviewer_would_accept).length,
+    tests_fail_judge_rejects: j.filter((r) => !r.grade?.resolved && !r.judge?.reviewer_would_accept).length,
+    judge_cost_usd: j.reduce((a, r) => a + (r.judge?.cost_usd ?? 0), 0),
+  };
+  // tasks no setup solved, and why the judge thinks so
+  const byTask = new Map<string, RunResult[]>();
+  for (const r of runs) byTask.set(r.task, [...(byTask.get(r.task) ?? []), r]);
+  const unsolved = [...byTask.entries()]
+    .filter(([, rs]) => rs.every((r) => !r.grade?.resolved))
+    .map(([task, rs]) => ({ task, causes: rs.map((r) => r.judge?.cause ?? "unjudged") }));
+  return { per, paired, agreement, unsolved };
 }
 
 const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
@@ -129,7 +157,27 @@ export function writeReport() {
         `| ${p.model} | ${p.tasks} | ${p.only_with_agents_md} | ${p.only_without} | ${p.p_value.toFixed(2)} |`,
     ),
     "",
-    `Spent on agents: $${spent().toFixed(2)}.`,
+    `Spent on agents: $${spent().toFixed(2)}${s.per.some((p) => p.infra_reruns) ? `; ${s.per.reduce((a, p) => a + p.infra_reruns, 0)} session(s) ended without an answer and were rerun once` : ""}.`,
+    "",
+    "## What the hidden tests miss",
+    "",
+    `A model judge (\`acdc judge\`) read ${s.agreement.judged} changes next to the fix n8n merged ($${s.agreement.judge_cost_usd.toFixed(2)}).`,
+    "",
+    "| | Judge: a reviewer would accept | Judge: would not |",
+    "|---|---|---|",
+    `| Hidden tests pass | ${s.agreement.tests_pass_judge_accepts} | ${s.agreement.tests_pass_judge_rejects} |`,
+    `| Hidden tests fail | ${s.agreement.tests_fail_judge_accepts} | ${s.agreement.tests_fail_judge_rejects} |`,
+    "",
+    "Why unresolved runs failed, by the judge:",
+    "",
+    "| Setup | Missed a case | Wrong cause | Issue underspecified | Tests too strict | Judge accepts |",
+    "|---|---|---|---|---|---|",
+    ...s.per.map(
+      (p) =>
+        `| ${p.setup} | ${p.failure_causes.missed_case ?? 0} | ${p.failure_causes.wrong_cause ?? 0} | ${p.failure_causes.underspecified ?? 0} | ${p.failure_causes.tests_too_strict ?? 0} | ${p.judge_accept_rate === null ? "–" : pct(p.judge_accept_rate)} |`,
+    ),
+    "",
+    `Tasks no setup solved: ${s.unsolved.length ? s.unsolved.map((u) => u.task).join(", ") : "none"}.`,
     "",
     "## Change risk on n8n's history",
     "",

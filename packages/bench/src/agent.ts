@@ -8,7 +8,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { benchCfg } from "./sandbox.js";
+import { benchCfg, projectsFor } from "./sandbox.js";
 
 export type Session = {
   ok: boolean;
@@ -40,12 +40,15 @@ export const ALLOWED = [
 ];
 
 /** The commands an agent's shell may run, written outside the checkout and put first on its PATH. */
-export function writeWrappers(binDir: string, checkoutDir: string) {
+export function writeWrappers(binDir: string, checkoutDir: string, repo: string) {
   const cfg = benchCfg();
   const pkg = join(checkoutDir, cfg.package);
   mkdirSync(binDir, { recursive: true });
   const net = cfg.network_isolation ? "unshare --user --net --map-root-user " : "";
-  const projects = cfg.projects.map((p) => `--project ${p}`).join(" ");
+  const projects = projectsFor(checkoutDir)
+    .map((p) => `--project ${p}`)
+    .join(" ");
+  const own = join(repo, cfg.package);
   const scripts = {
     "acdc-test": `#!/bin/sh
 # Run the package's tests without network. Usage: acdc-test [test files or name filters]
@@ -59,7 +62,7 @@ exec ${net}env -i PATH="$PATH" HOME=/tmp CI=true NODE_OPTIONS=--max-old-space-si
 cd "${pkg}" || exit 2
 files=""
 for a in "$@"; do files="$files \${a#${cfg.package}/}"; done
-exec env -i PATH="$PATH" HOME=/tmp ./node_modules/.bin/oxlint -c oxlint.config.mts $files
+exec env -i PATH="$PATH" HOME=/tmp ${own}/node_modules/.bin/oxlint -c ${own}/oxlint.config.mts $files
 `,
     "acdc-typecheck": `#!/bin/sh
 # Type-check the package. Usage: acdc-typecheck
@@ -207,6 +210,9 @@ export function runAgent(opts: {
         session.cost_usd = Math.max(session.cost_usd, opts.budget); // a killed session reports no cost
       } else if (!lines.length) {
         session.error = `no output (exit ${code}): ${err.trim().slice(0, 300)}`;
+      } else if (!lines.some((l) => l.includes('"type":"result"'))) {
+        // the CLI exited before it reported a result: an infrastructure failure, not the model's answer
+        session.error = `ended without a result (exit ${code}): ${err.trim().slice(0, 300)}`;
       }
       resolve(session);
     });

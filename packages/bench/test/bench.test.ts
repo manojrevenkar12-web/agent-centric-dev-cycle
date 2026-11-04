@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { type Grade, evidence, lastJson } from "../src/grade.js";
 import { signTest, summarise } from "../src/report.js";
 import type { RunResult } from "../src/run.js";
 import { prompt } from "../src/run.js";
+import { projectsFor } from "../src/sandbox.js";
 import type { Task } from "../src/tasks.js";
 
 const task: Task = {
@@ -104,14 +105,25 @@ describe("agent session", () => {
     });
   });
 
-  it("writes test and type-check wrappers that run without network", () => {
+  it("writes test, lint and type-check wrappers; tests run without network on the checkout's projects", () => {
     const bin = mkdtempSync(join(tmpdir(), "acdc-bin-"));
-    writeWrappers(bin, "/work/task");
+    const work = mkdtempSync(join(tmpdir(), "acdc-task-"));
+    mkdirSync(join(work, "packages/workflow"), { recursive: true });
+    writeFileSync(
+      join(work, "packages/workflow/vitest.config.ts"),
+      "projects: [{ test: { name: 'default' } }, engineProject('vm'), engineProject('legacy')]",
+    );
+    expect(projectsFor(work)).toEqual(["default", "legacy-engine"]);
+    writeWrappers(bin, work, "/work/n8n");
     const t = readFileSync(join(bin, "acdc-test"), "utf8");
     expect(t).toContain("unshare --user --net");
-    expect(t).toContain('cd "/work/task/packages/workflow"');
+    expect(t).toContain(`cd "${work}/packages/workflow"`);
     expect(t).toContain("env -i");
+    expect(t).toContain("--project default --project legacy-engine --reporter");
     expect(readFileSync(join(bin, "acdc-typecheck"), "utf8")).toContain("tsc --noEmit");
+    expect(readFileSync(join(bin, "acdc-lint"), "utf8")).toContain(
+      "/work/n8n/packages/workflow/oxlint.config.mts",
+    );
   });
 
   it("tells the agent the issue and how to verify, never the hidden tests", () => {

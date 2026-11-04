@@ -2,8 +2,15 @@
 package: packages/workflow
 # sparse checkout of a task: the package and the workspace packages its tests resolve through node_modules
 sparse: [packages/workflow, patches]
-# vitest projects to run. The isolated-vm engine project needs a native module the sandbox does not build.
-projects: [default, legacy-engine, quickjs-engine]
+# vitest projects come from each checkout's own config; the isolated-vm engine needs a native module
+# the sandbox does not build, so it is skipped.
+skip_projects: [vm-engine]
+# Installed dependency trees by era: a task runs on the newest one installed at or before its commit.
+# "" is the main checkout (N8N_REPO). Others are worktrees of n8n at an older commit with
+# `pnpm install --filter "n8n-workflow..."` and the workspace dependencies built.
+envs:
+  - { from: "2025-11-01", dir: /home/claude/acdc-env/2026-07 }
+  - { from: "2026-09-01", dir: "" }
 work_dir: /home/claude/acdc-work
 test_timeout_s: 600
 network_isolation: true        # tests run in a new user and network namespace (unshare)
@@ -32,3 +39,9 @@ run:
   total_cap_usd: 80
   timeout_s: 1500
   concurrency: 2                 # sessions at a time (each runs vitest; the box has 2 cores)
+
+# The judge reads each change next to the fix n8n merged (packages/bench/src/judge.ts). Its verdicts are
+# reported beside the hidden tests, never instead of them.
+judge:
+  model: sonnet
+  budget_usd: 0.40

@@ -181,7 +181,10 @@ export async function mineTasks(repo: string, args: string[]) {
     if (!("rejected" in r) && r.validation.base_failed === 0)
       // nothing failed before the fix: the hidden test file did not even load, because it imports names
       // only the fix adds. An agent cannot guess those names, so the task would grade the guess.
-      r = { id: r.id, rejected: "the hidden tests do not load before the fix (they import names the fix adds)" };
+      r = {
+        id: r.id,
+        rejected: "the hidden tests do not load before the fix (they import names the fix adds)",
+      };
     if (!("rejected" in r)) {
       r.fail_to_pass = [...new Set(r.fail_to_pass)];
       r.pass_to_pass = [...new Set(r.pass_to_pass)].filter((k) => !r.fail_to_pass.includes(k));

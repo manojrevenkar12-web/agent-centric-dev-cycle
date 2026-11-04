@@ -5,6 +5,8 @@
  *   acdc owners-check     compare our OWNERS matcher with n8n's own on every file (needs N8N_REPO)
  *   acdc tasks            mine benchmark tasks from fix commits and validate them (needs N8N_REPO)
  *   acdc run              run agents on the tasks in sandboxes (needs N8N_REPO and the claude CLI)
+ *   acdc regrade          grade stored runs again with the current grader (no agent reruns)
+ *   acdc judge            a model reads each failed or passed change next to n8n's merged fix
  *   acdc report           summarise runs into reports/bench.json and reports/RESULTS.md
  */
 import { label, readHistory } from "./history.js";
@@ -58,13 +60,23 @@ async function main(cmd: string | undefined, args: string[]) {
       await runBench(need(), args);
       return;
     }
+    case "regrade": {
+      const { regradeAll } = await import("./run.js");
+      await regradeAll(need());
+      return;
+    }
+    case "judge": {
+      const { judgeAll } = await import("./judge.js");
+      await judgeAll(need());
+      return;
+    }
     case "report": {
       const { writeReport } = await import("./report.js");
       writeReport();
       return;
     }
     default:
-      console.log("usage: acdc history|risk|owners-check|tasks|run|report");
+      console.log("usage: acdc history|risk|owners-check|tasks|run|judge|report");
       process.exitCode = cmd ? 2 : 0;
   }
 }

@@ -41,7 +41,7 @@ export class SandboxExecutor {
     const dir = checkout(this.repo, start, `run-${o.runId}-${o.attempt}`);
     const bin = join(benchCfg().work_dir, `run-${o.runId}-bin`);
     try {
-      writeWrappers(bin, dir);
+      writeWrappers(bin, dir, this.repo);
       const s = await runAgent({
         prompt: issuePrompt(issue, o.feedback),
         cwd: dir,
@@ -52,16 +52,17 @@ export class SandboxExecutor {
         transcript: join(benchCfg().work_dir, "transcripts", `${o.runId}-${o.attempt}.jsonl`),
       });
       const files = changedFiles(dir);
-      const tests = runTests(
-        dir,
-        files.filter((f) => isTestFile(f) && f.endsWith(".test.ts")),
-      );
+      const testFiles = files.filter((f) => isTestFile(f) && f.endsWith(".test.ts"));
+      const tests = testFiles.length
+        ? runTests(dir, testFiles)
+        : { ok: false, results: [], error: "", seconds: 0 };
       const checks = {
         tests: tests.results.length > 0 && tests.results.every((r) => r.status !== "failed"),
         typecheck: typecheck(dir).ok,
         lint: lint(
           dir,
           files.filter((f) => !isTestFile(f)),
+          this.repo,
         ).ok,
       };
       if (files.length) {

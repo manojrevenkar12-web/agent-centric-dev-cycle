@@ -20,18 +20,24 @@ import {
 } from "@acdc/core";
 import { readDataset } from "./dataset.js";
 import { fileHistory } from "./risk-train.js";
-import { applyFiles, benchCfg, changedFiles, diff, lint, runTests, typecheck } from "./sandbox.js";
+import { applyFiles, benchCfg, changedFiles, checksAgainstBase, diff, runTests } from "./sandbox.js";
 import { type Task, passing } from "./tasks.js";
 
 export type Claim = { summary?: string; verification?: string; tests_pass?: boolean; risks?: string[] };
 
+/** 2: type check and lint count only errors the change introduced (checksAgainstBase).
+ *  3: a change with no test files and a task with no related tests runs no visible tests (an empty
+ *     list made vitest run the whole suite). */
+export const GRADER_VERSION = 3;
+
 export type Grade = {
+  version?: number;
   resolved: boolean;
   fail_to_pass: { passed: number; total: number };
   pass_to_pass: { passed: number; total: number };
   failing: string[];
-  typecheck: { ok: boolean; errors: string[] };
-  lint: { ok: boolean; problems: number };
+  typecheck: { ok: boolean; errors: string[]; preexisting?: number };
+  lint: { ok: boolean; problems: number; preexisting?: number };
   ci_pass: boolean;
   files: string[];
   outside_package: string[];
@@ -88,14 +94,15 @@ export function grade(repo: string, dir: string, task: Task, finalText: string):
   const patch = diff(dir);
   const outside = files.filter((f) => !f.startsWith(`${cfg.package}/`));
   const tests = files.filter(isTestFile);
-  const tc = typecheck(dir); // before the hidden tests: they may use the reference fix's new exports
-  const ln = lint(
-    dir,
-    files.filter((f) => !isTestFile(f)),
-  );
-  const visible = runTests(dir, [
+  // before the hidden tests: they may use the reference fix's new exports
+  const { typecheck: tc, lint: ln } = checksAgainstBase(dir, files, repo);
+  // the tests a reviewer's CI run would show for this change; with none, vitest would run everything
+  const visibleFiles = [
     ...new Set([...tests.filter((f) => f.endsWith(".test.ts")), ...task.related_test_files]),
-  ]);
+  ];
+  const visible = visibleFiles.length
+    ? runTests(dir, visibleFiles)
+    : { ok: true, results: [], error: "", seconds: 0 };
   applyFiles(repo, dir, task.sha, task.test_files); // the hidden tests replace whatever the agent wrote there
   const hidden = runTests(dir, [...task.test_files, ...task.related_test_files]);
   const passed = new Set(passing(hidden.results));
@@ -104,19 +111,21 @@ export function grade(repo: string, dir: string, task: Task, finalText: string):
   const failing = [...task.fail_to_pass, ...task.pass_to_pass].filter((k) => !passed.has(k));
   const resolved = f2p === task.fail_to_pass.length && p2p === task.pass_to_pass.length;
   const visibleOk =
-    visible.results.every((r) => r.status !== "failed") && (visible.ok || visible.results.length > 0);
+    !visibleFiles.length ||
+    (visible.results.every((r) => r.status !== "failed") && (visible.ok || visible.results.length > 0));
   const ciPass = tc.ok && ln.ok && visibleOk;
   const r = riskOf(files, task.date, task.title);
   const d = decide("bugfix", files, r.owners, r.tier as "low" | "medium" | "high");
   const claim = lastJson(finalText);
   const said = typeof claim?.tests_pass === "boolean" ? claim.tests_pass : null;
   return {
+    version: GRADER_VERSION,
     resolved,
     fail_to_pass: { passed: f2p, total: task.fail_to_pass.length },
     pass_to_pass: { passed: p2p, total: task.pass_to_pass.length },
     failing: failing.slice(0, 20),
     typecheck: tc,
-    lint: { ok: ln.ok, problems: ln.problems },
+    lint: ln,
     ci_pass: ciPass,
     files,
     outside_package: outside,

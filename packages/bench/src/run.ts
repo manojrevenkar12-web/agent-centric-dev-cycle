@@ -1,11 +1,20 @@
 /** Run the benchmark: every setup (model x context) on every task, each in its own sandbox, within a
  * total spend cap kept in a ledger. A setup's result for a task is written once to reports/runs/ and
  * never rerun unless asked (`--force`), so the numbers in the report are first attempts. */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { ROOT, loadConfig } from "@acdc/core";
 import { type Session, runAgent, writeWrappers } from "./agent.js";
-import { type Grade, evidence, grade, lastJson } from "./grade.js";
+import { GRADER_VERSION, type Grade, evidence, grade, lastJson } from "./grade.js";
 import { benchCfg, checkout, remove } from "./sandbox.js";
 import { type Task, readTasks } from "./tasks.js";
 
@@ -17,6 +26,10 @@ type RunCfg = {
   timeout_s: number;
   concurrency: number;
 };
+/** The session ended without the model's answer (the CLI died, or never started). */
+export const infraFailure = (s: Session) =>
+  !s.ok && (s.error.startsWith("ended without a result") || s.error.startsWith("no output"));
+
 export type RunResult = {
   task: string;
   setup: string;
@@ -25,6 +38,8 @@ export type RunResult = {
   session: Session;
   grade: Grade | null;
   evidence: string;
+  infra_retry?: { error: string; cost_usd: number }; // the first session ended without an answer; rerun once
+  judge?: import("./judge.js").Verdict; // added later by `acdc judge`
 };
 
 export const RUNS = join(ROOT, "reports/runs");
@@ -67,7 +82,7 @@ export async function runOne(repo: string, task: Task, setup: Setup, cfg: RunCfg
   const bin = join(benchCfg().work_dir, `${name}-bin`);
   try {
     if (setup.context === "bare") for (const f of CONTEXT_FILES) rmSync(join(dir, f), { force: true });
-    writeWrappers(bin, dir);
+    writeWrappers(bin, dir, repo);
     const session = await runAgent({
       prompt: prompt(task),
       cwd: dir,
@@ -110,7 +125,9 @@ export async function runBench(repo: string, args: string[]) {
   for (const s of setups) mkdirSync(join(RUNS, s.name), { recursive: true });
   // task by task, every setup on it, so a stopped run still leaves paired results
   const jobs = tasks
-    .flatMap((task) => setups.map((setup) => ({ task, setup, out: join(RUNS, setup.name, `${task.id}.json`) })))
+    .flatMap((task) =>
+      setups.map((setup) => ({ task, setup, out: join(RUNS, setup.name, `${task.id}.json`) })),
+    )
     .filter((j) => force || !existsSync(j.out));
   let inFlight = 0; // budget reserved by sessions that have not reported their cost yet
   let stop = false;
@@ -125,6 +142,15 @@ export async function runBench(repo: string, args: string[]) {
       let r: RunResult;
       try {
         r = await runOne(repo, j.task, j.setup, cfg);
+        if (infraFailure(r.session)) {
+          // one rerun for a session that never reached the model's answer; both are on record
+          const first = { error: r.session.error, cost_usd: r.session.cost_usd };
+          appendFileSync(
+            LEDGER,
+            `${JSON.stringify({ at: new Date().toISOString(), setup: j.setup.name, task: j.task.id, cost_usd: first.cost_usd, infra_failure: first.error })}\n`,
+          );
+          r = { ...(await runOne(repo, j.task, j.setup, cfg)), infra_retry: first };
+        }
       } finally {
         inFlight -= cfg.budget_per_run_usd;
       }
@@ -140,4 +166,45 @@ export async function runBench(repo: string, args: string[]) {
     }
   };
   await Promise.all(Array.from({ length: cfg.concurrency }, worker));
+}
+
+/** Grade every stored run again with the current grader, from the change it recorded. The agents'
+ * work is not rerun: each change is applied to a fresh checkout of its task's commit. Used when the
+ * grader itself is fixed (version 2 compares the type check and lint with the starting commit). */
+export async function regradeAll(repo: string) {
+  const tasks = new Map(readTasks().map((t) => [t.id, t]));
+  for (const setupDir of readdirSync(RUNS, { withFileTypes: true }).filter((d) => d.isDirectory())) {
+    for (const f of readdirSync(join(RUNS, setupDir.name)).filter((x) => x.endsWith(".json"))) {
+      const path = join(RUNS, setupDir.name, f);
+      const r = JSON.parse(readFileSync(path, "utf8")) as RunResult;
+      const task = tasks.get(r.task);
+      if (!task || !r.grade || r.grade.version === GRADER_VERSION) continue;
+      if (r.grade.diff.length >= 60_000) {
+        console.log(
+          `${setupDir.name} ${r.task}: change too large to replay, kept grade ${r.grade.version ?? 1}`,
+        );
+        continue;
+      }
+      const dir = checkout(repo, task.base, `regrade-${setupDir.name}-${task.id}`);
+      try {
+        if (r.context === "bare") for (const c of CONTEXT_FILES) rmSync(join(dir, c), { force: true });
+        if (r.grade.diff.trim())
+          execFileSync("git", ["-C", dir, "apply", "--whitespace=nowarn", "-"], { input: r.grade.diff });
+        const g = grade(repo, dir, task, r.session.result);
+        if (r.context === "bare") {
+          g.files = g.files.filter((x) => !CONTEXT_FILES.includes(x));
+          g.outside_package = g.outside_package.filter((x) => !CONTEXT_FILES.includes(x));
+        }
+        const before = r.grade.resolved;
+        r.grade = g;
+        r.evidence = evidence(task, g, lastJson(r.session.result), r.session);
+        writeFileSync(path, `${JSON.stringify(r, null, 1)}\n`);
+        console.log(
+          `${setupDir.name} ${r.task}: resolved ${before} -> ${g.resolved}, ci ${g.ci_pass ? "green" : "red"}`,
+        );
+      } finally {
+        remove(repo, dir);
+      }
+    }
+  }
 }
