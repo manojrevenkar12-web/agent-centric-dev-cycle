@@ -141,6 +141,21 @@ The service needs `ACDC_DATABASE_URL`, `N8N_REPO`, `LINEAR_API_KEY`, `LINEAR_WEB
 - **The loop has run against fakes**, not live Linear and GitHub: the adapters verify signatures and
   speak both APIs, and the executor is the benchmark's sandbox, but no real issue has gone through.
 
+## Also built in n8n
+
+The same rule carries into n8n itself: models read, rules decide, a person sees anything risky
+first, and new behaviour starts in shadow mode. Below is the intake workflow from
+[n8n-support-autopilot](https://github.com/manojrevenkar12-web/n8n-support-autopilot), a separate
+project by the same author, after a run with its 12 sample tickets in a real n8n.
+
+![n8n-support-autopilot intake workflow in the n8n editor](docs/screenshots/n8n-support-autopilot-intake.png)
+
+A helpdesk ticket is de-duplicated, redacted, read by rules and matched to its account, and a
+written policy decides what happens. Routine sign-in, invoice and plan questions get an automatic
+answer; money, security, privacy and legal go to a person first. For tickets the rules cannot read,
+Claude only suggests a queue and can never make a ticket eligible for an automatic answer. The
+workflows pass 20 of 20 end-to-end checks inside n8n 2.44.7.
+
 ## Layout
 
 | Path | What |
