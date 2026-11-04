@@ -1,0 +1,17 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "formatter": { "indentStyle": "space", "lineWidth": 110 },
+  "linter": { "enabled": true, "rules": { "recommended": true } },
+  "organizeImports": { "enabled": true },
+  "files": {
+    "ignore": [
+      "data/**",
+      "runs/**",
+      "reports/**",
+      "**/dist/**",
+      "**/node_modules/**",
+      "apps/console/e2e/fixtures/**",
+      "fixtures/**"
+    ]
+  }
+}

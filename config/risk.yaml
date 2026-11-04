@@ -1,0 +1,11 @@
+# The change-risk model, trained on n8n's own history (packages/bench/src/history.ts).
+since: "2025-11-01"
+followup_days: 7          # a fix to the same source file within this many days counts as a follow-up
+train_until: "2026-08-31" # later changes are the test months (time split, no leakage)
+label_until_days: 7       # changes newer than this before the last commit have no complete label yet
+l2: 1.0
+epochs: 300
+learning_rate: 0.1
+# Shadow mode for automated approval: the share of changes the low tier may take, chosen on training data
+low_tier_share: 0.30
+high_tier_share: 0.15

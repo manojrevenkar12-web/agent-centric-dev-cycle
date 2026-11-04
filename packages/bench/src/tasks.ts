@@ -1,0 +1,181 @@
+/** Benchmark tasks from real n8n fixes, the way SWE-bench builds them: the task starts at the fix's
+ * parent commit, the fix's own tests are hidden, and a task counts only if those tests fail before the
+ * fix and pass after it in our sandbox. Tests that already fail at the fix commit are left out, so an
+ * agent is never graded on the environment.
+ */
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { ROOT, isTestFile, loadConfig } from "@acdc/core";
+import { type TestResult, applyFiles, benchCfg, checkout, remove, runTests } from "./sandbox.js";
+
+export type Task = {
+  id: string;
+  pr: number;
+  sha: string; // the fix
+  base: string; // its parent: where the agent starts
+  date: string;
+  title: string;
+  statement: string; // what the agent is told
+  source_files: string[]; // what the fix changed (the reference solution's scope)
+  source_lines: number;
+  test_files: string[]; // hidden: the fix's tests
+  related_test_files: string[]; // visible tests that import a changed module
+  fail_to_pass: string[];
+  pass_to_pass: string[];
+  validation: { base_failed: number; fix_passed: number; seconds: number };
+};
+
+export const TASKS = join(ROOT, "data/tasks/tasks.json");
+export const STATEMENTS = join(ROOT, "data/tasks/statements.json");
+
+type Mining = {
+  since: string;
+  max_source_files: number;
+  max_source_lines: number;
+  require_tests_in: string;
+  limit: number;
+};
+
+const git = (repo: string, args: string[]) =>
+  execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+
+export type Candidate = {
+  sha: string;
+  date: string;
+  title: string;
+  pr: number;
+  source: string[];
+  tests: string[];
+  lines: number;
+};
+
+export function candidates(repo: string): Candidate[] {
+  const cfg = benchCfg();
+  const m = loadConfig<{ mining: Mining }>("bench").mining;
+  const raw = git(repo, [
+    "log",
+    "--first-parent",
+    `--since=${m.since}`,
+    "--format=@@%H%x09%aI%x09%s",
+    "--numstat",
+    "HEAD",
+    "--",
+    cfg.package,
+  ]);
+  const out: Candidate[] = [];
+  for (const block of raw.split("@@").filter(Boolean)) {
+    const [head, ...rows] = block.split("\n");
+    const [sha, date, title] = (head ?? "").split("\t");
+    if (!sha || !date || !title || !/^fix(\(|:)/.test(title)) continue;
+    const pr = Number(title.match(/\(#(\d+)\)\s*$/)?.[1] ?? 0);
+    const files = rows
+      .filter(Boolean)
+      .map((r) => r.split("\t"))
+      .map(([a, d, f]) => ({ f: f ?? "", n: (Number(a) || 0) + (Number(d) || 0) }));
+    // the whole commit, not only the package: a fix that also changed other packages is out of scope
+    const all = git(repo, ["show", "--name-only", "--format=", sha]).split("\n").filter(Boolean);
+    const source = all.filter(
+      (f) => !isTestFile(f) && !f.endsWith(".md") && !/CHANGELOG|package\.json$/.test(f),
+    );
+    const tests = all.filter((f) => f.startsWith(m.require_tests_in) && f.endsWith(".test.ts"));
+    const lines = files.filter((x) => source.includes(x.f)).reduce((s, x) => s + x.n, 0);
+    if (!pr || !tests.length || !source.length) continue;
+    if (source.some((f) => !f.startsWith(`${cfg.package}/src/`))) continue;
+    if (source.length > m.max_source_files || lines > m.max_source_lines) continue;
+    out.push({ sha, date, title, pr, source, tests, lines });
+  }
+  return out.slice(0, m.limit);
+}
+
+/** Test files in the package that import one of the changed modules (at the fix commit). */
+export function relatedTests(repo: string, sha: string, source: string[], hidden: string[]): string[] {
+  const cfg = benchCfg();
+  const testFiles = git(repo, ["ls-tree", "-r", "--name-only", sha, `${cfg.package}/test/`])
+    .split("\n")
+    .filter((f) => f.endsWith(".test.ts") && !hidden.includes(f));
+  const mods = source.map((f) => basename(f).replace(/\.ts$/, "")).filter((m) => m !== "index");
+  const hits: string[] = [];
+  for (const f of testFiles) {
+    const text = git(repo, ["show", `${sha}:${f}`]);
+    if (
+      mods.some((m) =>
+        new RegExp(`from ['"][^'"]*/${m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}['"]`).test(text),
+      )
+    )
+      hits.push(f);
+  }
+  return hits.slice(0, 6);
+}
+
+const key = (r: TestResult) => `${r.file} :: ${r.name}`;
+
+export function validate(repo: string, c: Candidate): Task | { id: string; rejected: string } {
+  const id = `n8n-${c.pr}`;
+  const base = git(repo, ["rev-parse", `${c.sha}^`]).trim();
+  const related = relatedTests(repo, c.sha, c.source, c.tests);
+  const dir = checkout(repo, base, `validate-${id}`);
+  try {
+    applyFiles(repo, dir, c.sha, [...c.tests, ...related]); // the fix's tests, on the code before the fix
+    const before = runTests(dir, [...c.tests, ...related]);
+    applyFiles(repo, dir, c.sha, c.source);
+    const after = runTests(dir, [...c.tests, ...related]);
+    const passedBefore = new Set(before.results.filter((r) => r.status === "passed").map(key));
+    const passedAfter = after.results.filter((r) => r.status === "passed").map(key);
+    const f2p = passedAfter.filter((k) => !passedBefore.has(k));
+    const p2p = passedAfter.filter((k) => passedBefore.has(k));
+    if (!after.results.length)
+      return { id, rejected: `no tests ran after the fix: ${after.error.slice(0, 300)}` };
+    if (!f2p.length) return { id, rejected: "the fix's tests already pass before the fix" };
+    const hiddenF2p = f2p.filter((k) => c.tests.some((t) => k.startsWith(`${t} ::`)));
+    if (!hiddenF2p.length) return { id, rejected: "only related tests changed outcome" };
+    return {
+      id,
+      pr: c.pr,
+      sha: c.sha,
+      base,
+      date: c.date,
+      title: c.title,
+      statement: "",
+      source_files: c.source,
+      source_lines: c.lines,
+      test_files: c.tests,
+      related_test_files: related,
+      fail_to_pass: f2p,
+      pass_to_pass: p2p,
+      validation: {
+        base_failed: before.results.filter((r) => r.status === "failed").length,
+        fix_passed: passedAfter.length,
+        seconds: Math.round(before.seconds + after.seconds),
+      },
+    };
+  } finally {
+    remove(repo, dir);
+  }
+}
+
+export async function mineTasks(repo: string, args: string[]) {
+  mkdirSync(join(ROOT, "data/tasks"), { recursive: true });
+  const cands = candidates(repo);
+  const want = Number(args[0] ?? cands.length);
+  const tasks: Task[] = [];
+  const rejected: { id: string; title: string; rejected: string }[] = [];
+  for (const c of cands) {
+    if (tasks.length >= want) break;
+    const r = validate(repo, c);
+    if ("rejected" in r) rejected.push({ id: r.id, title: c.title, rejected: r.rejected });
+    else tasks.push(r);
+    console.log(`${"rejected" in r ? "✗" : "✓"} ${c.title}${"rejected" in r ? ` — ${r.rejected}` : ""}`);
+  }
+  let statements: Record<string, string> = {};
+  try {
+    statements = JSON.parse(readFileSync(STATEMENTS, "utf8"));
+  } catch {}
+  for (const t of tasks) t.statement = statements[t.id] ?? t.title.replace(/\s*\(#\d+\)\s*$/, "");
+  writeFileSync(TASKS, `${JSON.stringify({ candidates: cands.length, tasks, rejected }, null, 1)}\n`);
+  console.log(`${tasks.length} tasks, ${rejected.length} rejected`);
+}
+
+export function readTasks(): Task[] {
+  return (JSON.parse(readFileSync(TASKS, "utf8")) as { tasks: Task[] }).tasks;
+}

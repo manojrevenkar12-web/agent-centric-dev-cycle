@@ -1,0 +1,33 @@
+# The benchmark: real fixes from n8n's history, replayed as tasks for coding agents (packages/bench).
+package: packages/workflow
+# sparse checkout of a task: the package and the workspace packages its tests resolve through node_modules
+sparse: [packages/workflow, patches]
+# vitest projects to run. The isolated-vm engine project needs a native module the sandbox does not build.
+projects: [default, legacy-engine, quickjs-engine]
+work_dir: /home/claude/acdc-work
+test_timeout_s: 900
+network_isolation: true        # tests run in a new user and network namespace (unshare)
+
+mining:
+  since: "2025-11-01"          # validation drops tasks whose old code no longer fits today's installed dependencies
+  max_source_files: 4
+  max_source_lines: 150        # changed lines in source files; larger fixes are features in disguise
+  require_tests_in: packages/workflow/test/
+  limit: 60                    # candidates to validate, newest first
+
+# A task's grade
+grade:
+  related_tests: true          # also run the package's test files that import a changed module
+  typecheck: true
+  lint: true
+
+# Who runs. Each setup runs every task once; results in reports/runs/<setup>/ are first attempts.
+run:
+  setups:
+    - { name: sonnet-repo, model: sonnet, context: repo }   # with n8n's AGENTS.md and CLAUDE.md
+    - { name: sonnet-bare, model: sonnet, context: bare }   # the same checkout without them
+    - { name: haiku-repo,  model: haiku,  context: repo }
+    - { name: haiku-bare,  model: haiku,  context: bare }
+  budget_per_run_usd: 1.50
+  total_cap_usd: 60
+  timeout_s: 1500
