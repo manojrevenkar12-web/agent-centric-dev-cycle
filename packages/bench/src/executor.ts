@@ -20,7 +20,7 @@ ${issue.title}
 ${issue.body}
 ${feedback ? `\nA reviewer asked for changes to your pull request:\n\n${feedback}\n` : ""}
 Work the way you would for a real pull request: find the cause, make the smallest change that fixes it, add or update tests.
-Verify it: \`acdc-test <test files>\` runs ${pkg}'s vitest tests without network; \`acdc-typecheck\` type-checks it.
+Verify it: \`acdc-test <test files>\` runs ${pkg}'s vitest tests without network; \`acdc-typecheck\` type-checks it; \`acdc-lint <files>\` runs n8n's linter.
 \`git status\` and \`git diff\` are available. No other commands are.
 
 When you are done, end your reply with one JSON object on its own line:

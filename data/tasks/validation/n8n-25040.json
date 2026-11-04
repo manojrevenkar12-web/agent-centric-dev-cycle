@@ -1,0 +1,4 @@
+{
+ "id": "n8n-25040",
+ "rejected": "no tests ran after the fix: le:///home/claude/vendor/n8n/node_modules/.pnpm/vitest@5.0.1_@opentelemetry+api@1.9.1_@types+node@20.19.41_@vitest+browser-playwright@5_81b5844da54ceb396b642a41cad5b1c3/node_modules/vitest/dist/chunks/index.DzobfTyw.js:20468:3)\n    at async createVitest (file:///home/claude/vendor/n8n/node_modules/."
+}

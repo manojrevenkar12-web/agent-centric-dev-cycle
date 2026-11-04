@@ -153,7 +153,7 @@ export function evidence(
     `- The agent ran the tests ${session.tests_run} time(s) and says: ${claim?.verification ?? "nothing"}`,
     `- Type check: ${g.typecheck.ok ? "passes" : `${g.typecheck.errors.length} error(s)`}; lint: ${g.lint.ok ? "passes" : `${g.lint.problems} error(s)`}`,
     `- Tests for the issue: ${g.fail_to_pass.passed}/${g.fail_to_pass.total}; tests that passed before: ${g.pass_to_pass.passed}/${g.pass_to_pass.total}`,
-    g.claim.overclaim ? "- **The agent said the tests pass; they do not.**" : "",
+    g.claim.overclaim ? "- **The agent said the tests pass; the tests for the issue do not.**" : "",
     "",
     "### Risks that remain",
     `- Change risk: ${g.risk.tier} (${(100 * g.risk.p).toFixed(0)}% chance of a revert or follow-up fix, from n8n's history)`,

@@ -1,0 +1,4 @@
+{
+ "id": "n8n-33897",
+ "rejected": "no tests ran after the fix: packages/workflow/test/errors/execution-base.error.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc-work/validate-n8n-33897/packages/workflow/src/errors/base/base.error.ts\npackages/workflow/test/errors/workflow-activation.error.test.ts: Cannot find package 'callsites' importe"
+}

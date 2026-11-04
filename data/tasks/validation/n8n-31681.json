@@ -1,0 +1,4 @@
+{
+ "id": "n8n-31681",
+ "rejected": "no tests ran after the fix: packages/workflow/test/node-helpers.conditions.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc-work/validate-n8n-31681/packages/workflow/src/errors/base/base.error.ts\npackages/workflow/test/node-helpers.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc"
+}

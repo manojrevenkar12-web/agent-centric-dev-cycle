@@ -161,12 +161,8 @@ export function lint(dir: string, files: string[]): { ok: boolean; problems: num
     env: { PATH: process.env.PATH ?? "", HOME: "/tmp" },
   });
   const out = `${r.stdout}${r.stderr}`;
-  const m = out.match(/Found (\d+) warnings? and (\d+) errors?/);
-  return {
-    ok: r.status === 0,
-    problems: m ? Number(m[2]) : r.status === 0 ? 0 : 1,
-    output: out.slice(-2000),
-  };
+  const problems = out.split("\n").filter((l) => /: error /.test(l)).length;
+  return { ok: r.status === 0 && problems === 0, problems: problems || (r.status === 0 ? 0 : 1), output: out.slice(-2000) };
 }
 
 /** What changed in the checkout against its commit (tracked and new files, excluding our own files). */

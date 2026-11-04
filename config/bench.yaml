@@ -27,7 +27,8 @@ run:
     - { name: sonnet-repo, model: sonnet, context: repo }   # with n8n's AGENTS.md and CLAUDE.md
     - { name: sonnet-bare, model: sonnet, context: bare }   # the same checkout without them
     - { name: haiku-repo,  model: haiku,  context: repo }
-    - { name: haiku-bare,  model: haiku,  context: bare }
-  budget_per_run_usd: 1.50
-  total_cap_usd: 60
+    - { name: opus-repo,   model: opus,   context: repo }
+  budget_per_run_usd: 3.00
+  total_cap_usd: 80
   timeout_s: 1500
+  concurrency: 2                 # sessions at a time (each runs vitest; the box has 2 cores)

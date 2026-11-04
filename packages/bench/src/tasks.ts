@@ -178,6 +178,10 @@ export async function mineTasks(repo: string, args: string[]) {
       mkdirSync(dirname(cache), { recursive: true });
       writeFileSync(cache, `${JSON.stringify(r, null, 1)}\n`);
     }
+    if (!("rejected" in r) && r.validation.base_failed === 0)
+      // nothing failed before the fix: the hidden test file did not even load, because it imports names
+      // only the fix adds. An agent cannot guess those names, so the task would grade the guess.
+      r = { id: r.id, rejected: "the hidden tests do not load before the fix (they import names the fix adds)" };
     if (!("rejected" in r)) {
       r.fail_to_pass = [...new Set(r.fail_to_pass)];
       r.pass_to_pass = [...new Set(r.pass_to_pass)].filter((k) => !r.fail_to_pass.includes(k));
@@ -190,9 +194,20 @@ export async function mineTasks(repo: string, args: string[]) {
   try {
     statements = JSON.parse(readFileSync(STATEMENTS, "utf8"));
   } catch {}
-  for (const t of tasks) t.statement = statements[t.id] ?? t.title.replace(/\s*\(#\d+\)\s*$/, "");
+  for (const t of tasks) t.statement = statements[t.id] ?? statementOf(t.title);
   writeFileSync(TASKS, `${JSON.stringify({ candidates: cands.length, tasks, rejected }, null, 1)}\n`);
   console.log(`${tasks.length} tasks, ${rejected.length} rejected`);
+}
+
+/** The issue an agent gets: the pull request's title without its commit type, scope, PR number or
+ * changelog marker, the way a short Linear ticket reads. */
+export function statementOf(title: string): string {
+  const s = title
+    .replace(/^[a-z]+(\([^)]*\))?!?:\s*/, "")
+    .replace(/\s*\(#\d+\)\s*$/, "")
+    .replace(/\s*\(no-changelog\)/i, "")
+    .trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export function readTasks(): Task[] {

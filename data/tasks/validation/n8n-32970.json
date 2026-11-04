@@ -1,0 +1,4 @@
+{
+ "id": "n8n-32970",
+ "rejected": "no tests ran after the fix: packages/workflow/test/expression.test.ts: Failed to resolve import \"callsites\" from \"src/errors/base/base.error.ts\". Does the file exist?\npackages/workflow/test/workflow-data-proxy.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc-work/validate-n8n-32970/packages/workflow/src"
+}

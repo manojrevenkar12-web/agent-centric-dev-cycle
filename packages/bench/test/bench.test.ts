@@ -62,6 +62,7 @@ describe("agent session", () => {
     expect(ALLOWED.filter((a) => a.startsWith("Bash"))).toEqual([
       "Bash(acdc-test:*)",
       "Bash(acdc-typecheck:*)",
+      "Bash(acdc-lint:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(ls:*)",
@@ -144,7 +145,7 @@ describe("grading and evidence", () => {
       "### Where a person decides",
     ])
       expect(md).toContain(h);
-    expect(md).toContain("The agent said the tests pass; they do not.");
+    expect(md).toContain("The agent said the tests pass; the tests for the issue do not.");
     expect(md).toContain("printer edge case");
     expect(md).toContain("agent reviewed");
   });
@@ -175,6 +176,7 @@ describe("report", () => {
         tokens_in: 1,
         tokens_out: 1,
         seconds: 60,
+        model: "m",
       },
       grade: grade({ resolved, mergeable: resolved }),
       evidence: "",

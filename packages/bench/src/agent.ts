@@ -22,6 +22,7 @@ export type Session = {
   tokens_in: number;
   tokens_out: number;
   seconds: number;
+  model: string; // the model that actually served the session
 };
 
 export const ALLOWED = [
@@ -32,6 +33,7 @@ export const ALLOWED = [
   "Grep",
   "Bash(acdc-test:*)",
   "Bash(acdc-typecheck:*)",
+  "Bash(acdc-lint:*)",
   "Bash(git status:*)",
   "Bash(git diff:*)",
   "Bash(ls:*)",
@@ -51,6 +53,13 @@ cd "${pkg}" || exit 2
 files=""
 for a in "$@"; do files="$files \${a#${cfg.package}/}"; done
 exec ${net}env -i PATH="$PATH" HOME=/tmp CI=true NODE_OPTIONS=--max-old-space-size=3072 ./node_modules/.bin/vitest run ${projects} --reporter=dot $files
+`,
+    "acdc-lint": `#!/bin/sh
+# Lint files with n8n's oxlint config. Usage: acdc-lint <source files>
+cd "${pkg}" || exit 2
+files=""
+for a in "$@"; do files="$files \${a#${cfg.package}/}"; done
+exec env -i PATH="$PATH" HOME=/tmp ./node_modules/.bin/oxlint -c oxlint.config.mts $files
 `,
     "acdc-typecheck": `#!/bin/sh
 # Type-check the package. Usage: acdc-typecheck
@@ -102,6 +111,7 @@ export function parse(lines: string[]): Omit<Session, "seconds"> {
     denials: 0,
     tokens_in: 0,
     tokens_out: 0,
+    model: "",
   };
   for (const line of lines) {
     let ev: Record<string, unknown>;
@@ -121,6 +131,8 @@ export function parse(lines: string[]): Omit<Session, "seconds"> {
         s.tool_calls++;
         if (c.name === "Bash" && /\bacdc-test\b/.test(c.input?.command ?? "")) s.tests_run++;
       }
+    } else if (ev.type === "system" && ev.subtype === "init") {
+      s.model = String(ev.model ?? "");
     } else if (ev.type === "result") {
       const u = (ev.usage ?? {}) as Record<string, number>;
       s.ok = ev.subtype === "success" && !ev.is_error;

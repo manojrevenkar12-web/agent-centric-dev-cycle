@@ -1,0 +1,4 @@
+{
+ "id": "n8n-35641",
+ "rejected": "no tests ran after the fix: packages/workflow/test/from-ai-parse-utils.test.ts: Cannot find package 'callsites' imported from /home/claude/acdc-work/validate-n8n-35641/packages/workflow/src/errors/base/base.error.ts"
+}

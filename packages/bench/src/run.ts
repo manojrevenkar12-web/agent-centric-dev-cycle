@@ -10,7 +10,13 @@ import { benchCfg, checkout, remove } from "./sandbox.js";
 import { type Task, readTasks } from "./tasks.js";
 
 export type Setup = { name: string; model: string; context: "bare" | "repo" };
-type RunCfg = { setups: Setup[]; budget_per_run_usd: number; total_cap_usd: number; timeout_s: number };
+type RunCfg = {
+  setups: Setup[];
+  budget_per_run_usd: number;
+  total_cap_usd: number;
+  timeout_s: number;
+  concurrency: number;
+};
 export type RunResult = {
   task: string;
   setup: string;
@@ -47,7 +53,7 @@ Issue: ${task.statement}
 
 Fix it in ${benchCfg().package}, the way you would for a real pull request:
 - find the cause and make the smallest change that fixes it; add or update tests for it;
-- verify your change: \`acdc-test <test files>\` runs the package's vitest tests (no network), \`acdc-typecheck\` type-checks the package;
+- verify your change: \`acdc-test <test files>\` runs the package's vitest tests (no network), \`acdc-typecheck\` type-checks the package, \`acdc-lint <files>\` runs n8n's linter;
 - \`git status\` and \`git diff\` are available. No other commands are.
 
 When you are done, end your reply with one JSON object on its own line:
@@ -99,26 +105,39 @@ export async function runBench(repo: string, args: string[]) {
   const limit = Number(args.find((a) => a.startsWith("--tasks="))?.split("=")[1] ?? Number.POSITIVE_INFINITY);
   const force = args.includes("--force");
   const tasks = readTasks().slice(0, limit);
+  const setups = cfg.setups.filter((s) => !only || s.name === only);
   mkdirSync(RUNS, { recursive: true });
-  for (const setup of cfg.setups.filter((s) => !only || s.name === only)) {
-    mkdirSync(join(RUNS, setup.name), { recursive: true });
-    for (const task of tasks) {
-      const out = join(RUNS, setup.name, `${task.id}.json`);
-      if (existsSync(out) && !force) continue;
-      if (spent() + cfg.budget_per_run_usd > cfg.total_cap_usd) {
+  for (const s of setups) mkdirSync(join(RUNS, s.name), { recursive: true });
+  // task by task, every setup on it, so a stopped run still leaves paired results
+  const jobs = tasks
+    .flatMap((task) => setups.map((setup) => ({ task, setup, out: join(RUNS, setup.name, `${task.id}.json`) })))
+    .filter((j) => force || !existsSync(j.out));
+  let inFlight = 0; // budget reserved by sessions that have not reported their cost yet
+  let stop = false;
+  const worker = async () => {
+    for (let j = jobs.shift(); j && !stop; j = jobs.shift()) {
+      if (spent() + inFlight + cfg.budget_per_run_usd > cfg.total_cap_usd) {
         console.log(`spend cap reached ($${spent().toFixed(2)} of $${cfg.total_cap_usd}); stopping`);
+        stop = true;
         return;
       }
-      const r = await runOne(repo, task, setup, cfg);
-      writeFileSync(out, `${JSON.stringify(r, null, 1)}\n`);
+      inFlight += cfg.budget_per_run_usd;
+      let r: RunResult;
+      try {
+        r = await runOne(repo, j.task, j.setup, cfg);
+      } finally {
+        inFlight -= cfg.budget_per_run_usd;
+      }
+      writeFileSync(j.out, `${JSON.stringify(r, null, 1)}\n`);
       appendFileSync(
         LEDGER,
-        `${JSON.stringify({ at: new Date().toISOString(), setup: setup.name, task: task.id, cost_usd: r.session.cost_usd })}\n`,
+        `${JSON.stringify({ at: new Date().toISOString(), setup: j.setup.name, task: j.task.id, cost_usd: r.session.cost_usd })}\n`,
       );
       const g = r.grade;
       console.log(
-        `${setup.name} ${task.id}: ${g?.resolved ? "resolved" : "not resolved"}, ci ${g?.ci_pass ? "green" : "red"}, ${g?.policy.level}, $${r.session.cost_usd.toFixed(2)}, ${r.session.seconds}s${r.session.error ? ` (${r.session.error})` : ""}`,
+        `${j.setup.name} ${j.task.id}: ${g?.resolved ? "resolved" : "not resolved"}, ci ${g?.ci_pass ? "green" : "red"}, ${g?.policy.level}, $${r.session.cost_usd.toFixed(2)}, ${r.session.seconds}s${r.session.error ? ` (${r.session.error})` : ""}`,
       );
     }
-  }
+  };
+  await Promise.all(Array.from({ length: cfg.concurrency }, worker));
 }
