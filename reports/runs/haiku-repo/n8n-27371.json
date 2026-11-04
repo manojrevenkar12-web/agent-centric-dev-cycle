@@ -1,0 +1,84 @@
+{
+ "task": "n8n-27371",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The fix is in `packages/workflow`: node names with quotes or backslashes now match and get rewritten inside expressions, and the new names are escaped. The targeted tests pass, but the full package run has one failure that predates this change as far as I can tell.\n\n**Cause:** `Workflow.renameNode` passes the raw node name to `applyAccessPatterns`, which searches expression text for that exact string. Expressions store quotes escaped (`$('Bob\\'s node')`), so `Bob's node` never matched. The new name was also inserted unescaped, which would break the expression if it contained a quote.\n\n**Change:**\n- `src/node-reference-parser-utils.ts`:\n  - The old name is matched in either raw or escaped form, so `$('Bob\\'s')`, `$(\"Bob's\")` and `$node[\"Bob's\"]` all match.\n  - The new name is escaped (`\\`, `'`, `\"`) before insertion. The escaped form is valid JS inside both `'…'` and `\"…\"` strings.\n- `src/workflow.ts`: no change; the raw names it passes are now handled inside the parser utils.\n- Tests:\n  - `test/node-reference-parser-utils.test.ts`: I rewrote one existing case, which passed names in pre-escaped form, to use raw names. I added cases for single quotes, `$node[...]`, a double-quoted expression, and backslashes.\n  - `test/workflow.test.ts`: a `renameNode` regression test covering both quote styles.\n\n**Verification:**\n- `acdc-test test/node-reference-parser-utils.test.ts test/workflow.test.ts`: 184/184 pass.\n- `acdc-test` (full package): one failure, `telemetry-helpers.test.ts > generateNodesGraph > should not fail on error to resolve a node parameter for sticky node type`. That code path doesn't touch the rename logic, but I did not run it against the unmodified tree, so I haven't proven it predates this change.\n- `acdc-typecheck`: one error, in `src/expression.ts:215` (`'bridge' does not exist in type 'EvaluatorConfig'`). I didn't touch that file.\n- `acdc-lint`: could not run, because the `tsgolint` executable is missing in this environment.\n\n**Things to note:**\n- A `packages/workflow/junit.xml` file from the test-report run is left behind. It's git-ignored, but I had no way to delete it with the available tools.\n- Edge case: a name written as `$(\"Bob's\")` gets rewritten to `$(\"Alice\\'s\")`. That's valid JS, but it's a different spelling than the user typed.\n\n{\"summary\": \"Node references with quotes (or backslashes) were not rewritten on rename because applyAccessPatterns matched the raw node name against expression text where quotes are escaped (e.g. $('Bob\\\\'s')), and inserted the new name unescaped. Now the old name matches raw or escaped form, and the new name is escaped before insertion. Added unit cases and a Workflow.renameNode regression test; one existing unit case was rewritten to use raw names.\", \"verification\": \"acdc-test on node-reference-parser-utils.test.ts and workflow.test.ts: 184/184 pass. Full package acdc-test: 1 unrelated failure in telemetry-helpers.test.ts (sticky node generateNodesGraph), not run against baseline. acdc-typecheck: 1 pre-existing error in src/expression.ts:215 ('bridge'). acdc-lint could not run (tsgolint missing).\", \"tests_pass\": false, \"risks\": [\"Full package suite has one failing telemetry-helpers test that I did not confirm predates this change; it doesn't touch the rename path.\", \"Existing unit case in node-reference-parser-utils.test.ts was rewritten to raw-name semantics; reviewer should confirm that contract change is intended.\", \"Names are now escaped as \\\\' in double-quoted expressions too ($(\\\"Bob's\\\") -> $(\\\"Alice\\\\'s\\\")); valid JS but a different spelling than the user wrote.\", \"Backslashes in node names are now escaped on rename (a\\\\b -> a\\\\\\\\b), which changes behavior for names containing backslashes.\", \"acdc-lint not run; style of the multi-line if in applyAccessPatterns should be checked by prettier/lint.\", \"Stray packages/workflow/junit.xml from a test-report run is left in the worktree (git-ignored, could not be deleted).\"]}",
+  "cost_usd": 0.0613395,
+  "turns": 38,
+  "tool_calls": 37,
+  "tests_run": 8,
+  "denials": 2,
+  "tokens_in": 1790749,
+  "tokens_out": 31855,
+  "model": "claude-haiku-5-5",
+  "seconds": 395
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 5,
+   "total": 5
+  },
+  "pass_to_pass": {
+   "passed": 49,
+   "total": 49
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-reference-parser-utils.ts",
+   "packages/workflow/test/node-reference-parser-utils.test.ts",
+   "packages/workflow/test/workflow.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-reference-parser-utils.test.ts",
+   "packages/workflow/test/workflow.test.ts"
+  ],
+  "lines_changed": 95,
+  "reference_lines": 43,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10200453018004166,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": false,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-reference-parser-utils.ts b/packages/workflow/src/node-reference-parser-utils.ts\nindex 28b9895ff..ff845f380 100644\n--- a/packages/workflow/src/node-reference-parser-utils.ts\n+++ b/packages/workflow/src/node-reference-parser-utils.ts\n@@ -69,6 +69,24 @@ export function dollarEscape(nodeName: string) {\n \treturn nodeName.replace(new RegExp('\\\\$', 'g'), '$$$$');\n }\n \n+// Escapes quotes and backslashes so a node name can sit inside a quoted expression string,\n+// e.g. `Bob's` -> `Bob\\'s` in `$('Bob\\'s')`. The escaped form is valid in both '' and \"\" strings.\n+function escapeNameForExpression(nodeName: string) {\n+\treturn nodeName.replace(/[\\\\'\"]/g, (char) => `\\\\${char}`);\n+}\n+\n+// Builds a regex source matching `nodeName` either raw or with its quotes/backslashes escaped,\n+// since expressions may contain the name in either form.\n+function nodeNameToRegexSource(nodeName: string) {\n+\treturn [...nodeName]\n+\t\t.map((char) => {\n+\t\t\tif (char === '\\\\') return String.raw`\\\\{1,2}`;\n+\t\t\tif (char === \"'\" || char === '\"') return String.raw`\\\\?${char}`;\n+\t\t\treturn backslashEscape(char);\n+\t\t})\n+\t\t.join('');\n+}\n+\n type AccessPattern = {\n \tcheckPattern: string;\n \treplacePattern: (name: string) => string;\n@@ -103,12 +121,16 @@ const ACCESS_PATTERNS: AccessPattern[] = [\n \n export function applyAccessPatterns(expression: string, previousName: string, newName: string) {\n \t// To not run the \"expensive\" regex stuff when it is not needed\n-\t// make a simple check first if it really contains the node-name\n-\tif (!expression.includes(previousName)) return expression;\n+\t// make a simple check first if it really contains the node-name (raw or escaped)\n+\tif (\n+\t\t!expression.includes(previousName) &&\n+\t\t!expression.includes(escapeNameForExpression(previousName))\n+\t)\n+\t\treturn expression;\n \n \t// Really contains node-name (even though we do not know yet if really as $node-expression)\n-\tconst escapedOldName = backslashEscape(previousName); // for match\n-\tconst escapedNewName = dollarEscape(newName); // for replacement\n+\tconst escapedOldName = nodeNameToRegexSource(previousName); // for match\n+\tconst escapedNewName = dollarEscape(escapeNameForExpression(newName)); // for replacement\n \n \tfor (const pattern of ACCESS_PATTERNS) {\n \t\tif (expression.includes(pattern.checkPattern)) {\ndiff --git a/packages/workflow/test/node-reference-parser-utils.test.ts b/packages/workflow/test/node-reference-parser-utils.test.ts\nindex 537abefb3..1e22e31b1 100644\n--- a/packages/workflow/test/node-reference-parser-utils.test.ts\n+++ b/packages/workflow/test/node-reference-parser-utils.test.ts\n@@ -127,10 +127,34 @@ describe('NodeReferenceParserUtils', () => {\n \t\t\t},\n \t\t\t{\n \t\t\t\texpression: '$(\"old\\\\\"Name\")',\n-\t\t\t\tpreviousName: 'old\\\\\"Name',\n-\t\t\t\tnewName: 'n\\\\\\'ew\\\\\"Name',\n+\t\t\t\tpreviousName: 'old\"Name',\n+\t\t\t\tnewName: \"n'ew\\\"Name\",\n \t\t\t\texpected: '$(\"n\\\\\\'ew\\\\\"Name\")',\n \t\t\t},\n+\t\t\t{\n+\t\t\t\texpression: \"$('old\\\\'Name')\",\n+\t\t\t\tpreviousName: \"old'Name\",\n+\t\t\t\tnewName: \"new'Name\",\n+\t\t\t\texpected: \"$('new\\\\'Name')\",\n+\t\t\t},\n+\t\t\t{\n+\t\t\t\texpression: \"$('old\\\\'Name').item.json.x + $node[\\\"old'Name\\\"].data\",\n+\t\t\t\tpreviousName: \"old'Name\",\n+\t\t\t\tnewName: 'plain',\n+\t\t\t\texpected: \"$('plain').item.json.x + $node[\\\"plain\\\"].data\",\n+\t\t\t},\n+\t\t\t{\n+\t\t\t\texpression: \"$(\\\"old'Name\\\").item.json.x\",\n+\t\t\t\tpreviousName: \"old'Name\",\n+\t\t\t\tnewName: 'new\"Name',\n+\t\t\t\texpected: '$(\"new\\\\\"Name\").item.json.x',\n+\t\t\t},\n+\t\t\t{\n+\t\t\t\texpression: \"$('old\\\\\\\\Name')\",\n+\t\t\t\tpreviousName: 'old\\\\Name',\n+\t\t\t\tnewName: 'new\\\\Name',\n+\t\t\t\texpected: \"$('new\\\\\\\\Name')\",\n+\t\t\t},\n \t\t])(\n \t\t\t'should correctly transform expression \"$expression\" with previousName \"$previousName\" and newName \"$newName\"',\n \t\t\t({ expression, previousName, newName, expected }) => {\ndiff --git a/packages/workflow/test/workflow.test.ts b/packages/workflow/test/workflow.test.ts\nindex 1959ce64a..a6cdc416b 100644\n--- a/packages/workflow/test/workflow.test.ts\n+++ b/packages/workflow/test/workflow.test.ts\n@@ -1184,6 +1184,43 @@ describe('Workflow', () => {\n \t\t\t});\n \t\t}\n \n+\t\ttest('should update expressions referencing a node whose name contains quotes', () => {\n+\t\t\tconst workflow = new Workflow({\n+\t\t\t\tnodes: [\n+\t\t\t\t\t{\n+\t\t\t\t\t\tname: \"Bob's node\",\n+\t\t\t\t\t\tparameters: {},\n+\t\t\t\t\t\ttype: 'test.set',\n+\t\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\t\tid: 'uuid-1',\n+\t\t\t\t\t\tposition: [100, 100],\n+\t\t\t\t\t},\n+\t\t\t\t\t{\n+\t\t\t\t\t\tname: 'Node2',\n+\t\t\t\t\t\tparameters: {\n+\t\t\t\t\t\t\tvalue1: \"={{ $('Bob\\\\'s node').item.json.x }}\",\n+\t\t\t\t\t\t\tvalue2: '={{ $(\"Bob\\'s node\").item.json.y }}',\n+\t\t\t\t\t\t},\n+\t\t\t\t\t\ttype: 'test.set',\n+\t\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\t\tid: 'uuid-2',\n+\t\t\t\t\t\tposition: [200, 100],\n+\t\t\t\t\t},\n+\t\t\t\t],\n+\t\t\t\tconnections: {},\n+\t\t\t\tactive: false,\n+\t\t\t\tnodeTypes,\n+\t\t\t});\n+\n+\t\t\tworkflow.renameNode(\"Bob's node\", \"Alice's node\");\n+\n+\t\t\texpect(workflow.nodes[\"Alice's node\"]).toBeDefined();\n+\t\t\texpect(workflow.nodes['Node2'].parameters).toEqual({\n+\t\t\t\tvalue1: \"={{ $('Alice\\\\'s node').item.json.x }}\",\n+\t\t\t\tvalue2: '={{ $(\"Alice\\\\\\'s node\").item.json.y }}',\n+\t\t\t});\n+\t\t});\n+\n \t\tdescribe('with restricted node names', () => {\n \t\t\tconst restrictedNames = [\n \t\t\t\t'hasOwnProperty',\n"
+ },
+ "evidence": "## fix(editor): Node references in expressions not updated when the renamed node has quotes\n\nNode references with quotes (or backslashes) were not rewritten on rename because applyAccessPatterns matched the raw node name against expression text where quotes are escaped (e.g. $('Bob\\'s')), and inserted the new name unescaped. Now the old name matches raw or escaped form, and the new name is escaped before insertion. Added unit cases and a Workflow.renameNode regression test; one existing unit case was rewritten to use raw names.\n\n### What changed\n- 1 source file(s), 2 test file(s), 95 changed lines\n- `packages/workflow/src/node-reference-parser-utils.ts`\n\n### What ran\n- The agent ran the tests 8 time(s) and says: acdc-test on node-reference-parser-utils.test.ts and workflow.test.ts: 184/184 pass. Full package acdc-test: 1 unrelated failure in telemetry-helpers.test.ts (sticky node generateNodesGraph), not run against baseline. acdc-typecheck: 1 pre-existing error in src/expression.ts:215 ('bridge'). acdc-lint could not run (tsgolint missing).\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 5/5; tests that passed before: 49/49\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- Full package suite has one failing telemetry-helpers test that I did not confirm predates this change; it doesn't touch the rename path.\n- Existing unit case in node-reference-parser-utils.test.ts was rewritten to raw-name semantics; reviewer should confirm that contract change is intended.\n- Names are now escaped as \\' in double-quoted expressions too ($(\"Bob's\") -> $(\"Alice\\'s\")); valid JS but a different spelling than the user wrote.\n- Backslashes in node names are now escaped on rename (a\\b -> a\\\\b), which changes behavior for names containing backslashes.\n- acdc-lint not run; style of the multi-line if in applyAccessPatterns should be checked by prettier/lint.\n- Stray packages/workflow/junit.xml from a test-report run is left in the worktree (git-ignored, could not be deleted).\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.06\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change matches node names containing quotes or backslashes in both raw and escaped forms and escapes the new name for the replacement. It is equivalent to or broader than the upstream fix, and no hidden tests fail. The per-character regex builder is a bit more elaborate than needed but is correct.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0207267
+ }
+}

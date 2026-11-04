@@ -1,0 +1,86 @@
+{
+ "task": "n8n-33897",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The fix is in place, but I could not run any verification. Bash was denied in this session, so the tests, typecheck, and lint have not been run.\n\n**Cause:** `ExecutionBaseError` set `this.name = this.constructor.name`. When `Error.prototype` is frozen, `name` is an inherited read-only property. An assignment to it throws a `TypeError` in strict mode, so constructing these errors fails. `WorkflowOperationError` and `SubworkflowOperationError` repeated the same assignment.\n\n**Changes:**\n- `src/errors/abstract/execution-base.error.ts`: replaced the assignment with `Object.defineProperty(this, 'name', …)`. I kept `enumerable: true` so the property matches what an assignment used to create.\n- `src/errors/workflow-operation.error.ts` and `src/errors/subworkflow-operation.error.ts`: removed their `this.name = this.constructor.name` lines. The base constructor already sets the name from the concrete subclass, so these were redundant. `SubworkflowOperationError` still builds `cause.name` from `this.name`, which the base class now sets.\n- `test/errors/frozen-error-prototype.test.ts` (new): freezes `Error.prototype` in `beforeAll` and checks that a custom `ExecutionBaseError` subclass, `WorkflowOperationError`, and `SubworkflowOperationError` construct with the correct `name`, message, level, description, and cause.\n\n**Verification:** none run. I did not run `acdc-test`, `acdc-typecheck`, or `acdc-lint`, and I did not confirm the new test fails before the fix. The diff was reviewed with `git diff`.\n\n{\"summary\": \"Constructing ExecutionBaseError subclasses threw when Error.prototype was frozen, because ExecutionBaseError assigned this.name, which is a read-only inherited property in that case. Replaced the assignment with Object.defineProperty (enumerable, writable, configurable as before), removed the redundant name assignments in WorkflowOperationError and SubworkflowOperationError, and added a test that freezes Error.prototype and checks the three error classes.\", \"verification\": \"Not run: Bash was denied in this session, so acdc-test, acdc-typecheck and acdc-lint were not executed. Changes were checked by reading the git diff only.\", \"tests_pass\": false, \"risks\": [\"Tests, typecheck and lint have not been run; run acdc-test on packages/workflow/test/errors/frozen-error-prototype.test.ts and the existing error tests, plus acdc-typecheck and acdc-lint.\", \"The new test freezes the global Error.prototype in beforeAll; confirm it doesn't affect other tests in the same vitest worker.\", \"Other this.message assignments in node-api/node-operation/workflow-activation errors are unchanged; they only throw if the own message property is absent, which the Error constructor normally prevents, but a reviewer may want to check them.\", \"defineProperty uses enumerable: true to match the old assignment behaviour; confirm that toJSON/serialization output is unchanged.\"]}",
+  "cost_usd": 0.007975030000000001,
+  "turns": 17,
+  "tool_calls": 16,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 148056,
+  "tokens_out": 7337,
+  "model": "claude-haiku-5-5",
+  "seconds": 39
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 10,
+   "total": 10
+  },
+  "failing": [
+   "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError with a frozen Error.prototype should wrap an ExecutionBaseError cause without writing through the prototype"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 7
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/errors/abstract/execution-base.error.ts",
+   "packages/workflow/src/errors/subworkflow-operation.error.ts",
+   "packages/workflow/src/errors/workflow-operation.error.ts",
+   "packages/workflow/test/errors/frozen-error-prototype.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/errors/frozen-error-prototype.test.ts"
+  ],
+  "lines_changed": 45,
+  "reference_lines": 21,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.13855902235626127,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": false,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/errors/abstract/execution-base.error.ts b/packages/workflow/src/errors/abstract/execution-base.error.ts\nindex 74b9b8a03..5e3197203 100644\n--- a/packages/workflow/src/errors/abstract/execution-base.error.ts\n+++ b/packages/workflow/src/errors/abstract/execution-base.error.ts\n@@ -27,7 +27,15 @@ export abstract class ExecutionBaseError extends BaseError {\n \tconstructor(message: string, options: ExecutionBaseErrorOptions = {}) {\n \t\tsuper(message, options);\n \n-\t\tthis.name = this.constructor.name;\n+\t\t// Use defineProperty rather than assignment: when `Error.prototype` is frozen\n+\t\t// (e.g. in the secure-mode task-runner sandbox), `name` is an inherited\n+\t\t// read-only property and assigning to it throws in strict mode.\n+\t\tObject.defineProperty(this, 'name', {\n+\t\t\tvalue: this.constructor.name,\n+\t\t\twritable: true,\n+\t\t\tenumerable: true,\n+\t\t\tconfigurable: true,\n+\t\t});\n \t\tthis.timestamp = Date.now();\n \n \t\tconst { cause, errorResponse } = options;\ndiff --git a/packages/workflow/src/errors/subworkflow-operation.error.ts b/packages/workflow/src/errors/subworkflow-operation.error.ts\nindex af61f10f4..2972e176d 100644\n--- a/packages/workflow/src/errors/subworkflow-operation.error.ts\n+++ b/packages/workflow/src/errors/subworkflow-operation.error.ts\n@@ -7,7 +7,6 @@ export class SubworkflowOperationError extends WorkflowOperationError {\n \n \tconstructor(message: string, description: string) {\n \t\tsuper(message);\n-\t\tthis.name = this.constructor.name;\n \t\tthis.description = description;\n \n \t\tthis.cause = {\ndiff --git a/packages/workflow/src/errors/workflow-operation.error.ts b/packages/workflow/src/errors/workflow-operation.error.ts\nindex 8c241caa4..240b1f9e2 100644\n--- a/packages/workflow/src/errors/workflow-operation.error.ts\n+++ b/packages/workflow/src/errors/workflow-operation.error.ts\n@@ -12,7 +12,6 @@ export class WorkflowOperationError extends ExecutionBaseError {\n \tconstructor(message: string, node?: INode, description?: string) {\n \t\tsuper(message, { cause: undefined });\n \t\tthis.level = 'warning';\n-\t\tthis.name = this.constructor.name;\n \t\tif (description) this.description = description;\n \t\tthis.node = node;\n \t\tthis.timestamp = Date.now();\ndiff --git a/packages/workflow/test/errors/frozen-error-prototype.test.ts b/packages/workflow/test/errors/frozen-error-prototype.test.ts\nnew file mode 100644\nindex 000000000..b82f08633\n--- /dev/null\n+++ b/packages/workflow/test/errors/frozen-error-prototype.test.ts\n@@ -0,0 +1,33 @@\n+import { ExecutionBaseError } from '../../src/errors/abstract/execution-base.error';\n+import { SubworkflowOperationError } from '../../src/errors/subworkflow-operation.error';\n+import { WorkflowOperationError } from '../../src/errors/workflow-operation.error';\n+\n+describe('execution errors when Error.prototype is frozen', () => {\n+\tbeforeAll(() => {\n+\t\t// In the secure-mode task-runner sandbox the built-in prototypes are frozen.\n+\t\t// Plain assignment to an inherited read-only property (e.g. `name`) throws\n+\t\t// in strict mode, so errors must define their own properties instead.\n+\t\tObject.freeze(Error.prototype);\n+\t});\n+\n+\tit('constructs an ExecutionBaseError subclass with its class name', () => {\n+\t\tclass CustomExecutionError extends ExecutionBaseError {}\n+\t\tconst error = new CustomExecutionError('boom');\n+\t\texpect(error.name).toBe('CustomExecutionError');\n+\t\texpect(error.message).toBe('boom');\n+\t});\n+\n+\tit('constructs a WorkflowOperationError with its class name', () => {\n+\t\tconst error = new WorkflowOperationError('timed out');\n+\t\texpect(error.name).toBe('WorkflowOperationError');\n+\t\texpect(error.message).toBe('timed out');\n+\t\texpect(error.level).toBe('warning');\n+\t});\n+\n+\tit('constructs a SubworkflowOperationError with its class name and cause', () => {\n+\t\tconst error = new SubworkflowOperationError('failed', 'details');\n+\t\texpect(error.name).toBe('SubworkflowOperationError');\n+\t\texpect(error.description).toBe('details');\n+\t\texpect(error.cause).toMatchObject({ name: 'SubworkflowOperationError', message: 'failed' });\n+\t});\n+});\n"
+ },
+ "evidence": "## fix(core): Construct execution errors correctly when Error.prototype is frozen\n\nConstructing ExecutionBaseError subclasses threw when Error.prototype was frozen, because ExecutionBaseError assigned this.name, which is a read-only inherited property in that case. Replaced the assignment with Object.defineProperty (enumerable, writable, configurable as before), removed the redundant name assignments in WorkflowOperationError and SubworkflowOperationError, and added a test that freezes Error.prototype and checks the three error classes.\n\n### What changed\n- 3 source file(s), 1 test file(s), 45 changed lines\n- `packages/workflow/src/errors/abstract/execution-base.error.ts`\n- `packages/workflow/src/errors/subworkflow-operation.error.ts`\n- `packages/workflow/src/errors/workflow-operation.error.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: Not run: Bash was denied in this session, so acdc-test, acdc-typecheck and acdc-lint were not executed. Changes were checked by reading the git diff only.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/2; tests that passed before: 10/10\n\n### Risks that remain\n- Change risk: medium (14% chance of a revert or follow-up fix, from n8n's history)\n- Tests, typecheck and lint have not been run; run acdc-test on packages/workflow/test/errors/frozen-error-prototype.test.ts and the existing error tests, plus acdc-typecheck and acdc-lint.\n- The new test freezes the global Error.prototype in beforeAll; confirm it doesn't affect other tests in the same vitest worker.\n- Other this.message assignments in node-api/node-operation/workflow-activation errors are unchanged; they only throw if the own message property is absent, which the Error constructor normally prevents, but a reviewer may want to check them.\n- defineProperty uses enumerable: true to match the old assignment behaviour; confirm that toJSON/serialization output is unchanged.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change fixes the `name` assignment in ExecutionBaseError, but WorkflowActivationError still does `error.constructor = cause.constructor; error.name = cause.name` on a fresh Error, which throws when Error.prototype is frozen. The same failure mode the issue describes remains when wrapping an ExecutionBaseError cause.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0127607
+ }
+}

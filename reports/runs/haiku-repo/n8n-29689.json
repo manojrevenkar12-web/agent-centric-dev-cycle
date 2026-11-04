@@ -1,0 +1,82 @@
+{
+ "task": "n8n-29689",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The unknown-key crash is fixed. A `fixedCollection` with `multipleValues: true` now skips option keys that no longer exist, instead of throwing \"Could not find property option\". The node-helpers suite passes (178 tests, including the new regression test), and the typecheck is clean. Lint could not run because `tsgolint` is not installed in this environment.\n\n**Cause:** In `getNodeParameters` (`packages/workflow/src/node-helpers.ts`), the multi-value branch threw `ApplicationError` when a stored key didn't match any option. The single-value branch already skipped such keys silently.\n\n**Change:**\n- `node-helpers.ts`: the option lookup now runs once per key, before the per-item loop. If no option matches, the loop `continue`s, so the unknown key is dropped entirely. Previously a `break` or `continue` inside the inner loop would have left an empty array under the unknown key. The `ApplicationError` throw is removed, and `ApplicationError` is still used elsewhere in the file, so the import stays.\n- `test/node-helpers.test.ts`: new test `getNodeParameters - unknown fixedCollection keys`. It passes a `multipleValues` collection with one valid key and one unknown key, and expects only the valid key in the result.\n\n**Verification:**\n- `acdc-test packages/workflow/test/node-helpers.test.ts`: 1 file, 178 tests passed.\n- `acdc-typecheck`: no output (no errors).\n- `acdc-lint`: failed with \"Failed to find tsgolint executable\", so the changed files are unlinted. I also did not run the test against the original code to confirm it fails there.\n- Mid-session, a Bash call was denied in don't-ask mode. I retried once with a plain command, which succeeded, and did not try to get around the denial further.\n\n{\"summary\": \"Multi-value fixedCollection parameters threw 'Could not find property option' when a stored key no longer matched any option. In getNodeParameters (packages/workflow/src/node-helpers.ts), the option lookup now runs before the per-item loop and skips unknown keys via continue, matching the single-value branch. Added a regression test in packages/workflow/test/node-helpers.test.ts.\", \"verification\": \"acdc-test on test/node-helpers.test.ts: 178/178 passed, including the new 'unknown fixedCollection keys' test. acdc-typecheck: no output (clean). acdc-lint could not run (tsgolint executable missing). Did not verify the new test fails on the original code.\", \"tests_pass\": true, \"risks\": [\"Lint was not run, so formatting of the edited block in node-helpers.ts is unchecked by the linter (indentation was corrected by hand).\", \"Unknown keys are now silently dropped in the multi-value branch; a reviewer should confirm that silently dropping stale data is acceptable rather than logging it.\", \"The skip happens before the per-item loop, so an unknown key with an empty array is also dropped, not preserved as an empty collection.\", \"The new test was not confirmed to fail against the original code.\"]}",
+  "cost_usd": 0.025462380000000007,
+  "turns": 35,
+  "tool_calls": 34,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 782067,
+  "tokens_out": 20700,
+  "model": "claude-haiku-5-5",
+  "seconds": 140
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 318,
+   "total": 318
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 81,
+  "reference_lines": 19,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12987441102537045,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex d7ae0b95a..d9aceaae3 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -929,20 +929,20 @@ export function getNodeParameters(\n \t\t\t\t\tif (typeof propertyValues !== 'object' || Array.isArray(propertyValues)) {\n \t\t\t\t\t\tcontinue;\n \t\t\t\t\t}\n+\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n+\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n+\t\t\t\t\t) as INodePropertyCollection | undefined;\n+\n+\t\t\t\t\tif (nodePropertyOptions === undefined) {\n+\t\t\t\t\t\t// Unknown key (e.g. left over from an older version of the node) - skip it\n+\t\t\t\t\t\t// instead of failing the whole parameter resolution\n+\t\t\t\t\t\tcontinue;\n+\t\t\t\t\t}\n+\n \t\t\t\t\t// Iterate over all items as it contains multiple ones\n \t\t\t\t\tfor (const nodeValue of (propertyValues as INodeParameters)[\n \t\t\t\t\t\titemName\n \t\t\t\t\t] as INodeParameters[]) {\n-\t\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n-\t\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n-\t\t\t\t\t\t) as INodePropertyCollection;\n-\n-\t\t\t\t\t\tif (nodePropertyOptions === undefined) {\n-\t\t\t\t\t\t\tthrow new ApplicationError('Could not find property option', {\n-\t\t\t\t\t\t\t\textra: { propertyOption: itemName, property: nodeProperties.name },\n-\t\t\t\t\t\t\t});\n-\t\t\t\t\t\t}\n-\n \t\t\t\t\t\ttempNodePropertiesArray = nodePropertyOptions.values!;\n \t\t\t\t\t\ttempValue = getNodeParameters(\n \t\t\t\t\t\t\ttempNodePropertiesArray,\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex 2da320a95..d43e472ba 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -6372,6 +6372,67 @@ describe('NodeHelpers', () => {\n \t\t});\n \t});\n \n+\t\tdescribe('getNodeParameters - unknown fixedCollection keys', () => {\n+\t\tit('should skip unknown option keys in a multipleValues fixedCollection instead of throwing', () => {\n+\t\t\tconst nodePropertiesArray: INodeProperties[] = [\n+\t\t\t\t{\n+\t\t\t\t\tdisplayName: 'Items',\n+\t\t\t\t\tname: 'items',\n+\t\t\t\t\tplaceholder: 'Add Item',\n+\t\t\t\t\ttype: 'fixedCollection',\n+\t\t\t\t\ttypeOptions: { multipleValues: true },\n+\t\t\t\t\tdefault: {},\n+\t\t\t\t\toptions: [\n+\t\t\t\t\t\t{\n+\t\t\t\t\t\t\tdisplayName: 'Item',\n+\t\t\t\t\t\t\tname: 'item',\n+\t\t\t\t\t\t\tvalues: [{ displayName: 'Value', name: 'value', type: 'string', default: '' }],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t],\n+\t\t\t\t},\n+\t\t\t];\n+\n+\t\t\tconst nodeValues: INodeParameters = {\n+\t\t\t\titems: {\n+\t\t\t\t\tremovedOption: [{ value: 'old' }],\n+\t\t\t\t\titem: [{ value: 'kept' }],\n+\t\t\t\t},\n+\t\t\t};\n+\n+\t\t\tconst node: INode = {\n+\t\t\t\tid: 'test-123',\n+\t\t\t\tname: 'Test',\n+\t\t\t\ttype: 'n8n-nodes-base.test',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\tposition: [0, 0],\n+\t\t\t\tparameters: nodeValues,\n+\t\t\t\tcredentials: {},\n+\t\t\t};\n+\t\t\tconst description: INodeTypeDescription = {\n+\t\t\t\tname: 'Test',\n+\t\t\t\tdisplayName: 'Test',\n+\t\t\t\tgroup: [],\n+\t\t\t\tversion: 1,\n+\t\t\t\tdescription: 'Test',\n+\t\t\t\tdefaults: {},\n+\t\t\t\tinputs: [],\n+\t\t\t\toutputs: [],\n+\t\t\t\tproperties: nodePropertiesArray,\n+\t\t\t};\n+\n+\t\t\tconst result = getNodeParameters(\n+\t\t\t\tnodePropertiesArray,\n+\t\t\t\tnodeValues,\n+\t\t\t\tfalse,\n+\t\t\t\tfalse,\n+\t\t\t\tnode,\n+\t\t\t\tdescription,\n+\t\t\t);\n+\n+\t\t\texpect(result).toEqual({ items: { item: [{ value: 'kept' }] } });\n+\t\t});\n+\t});\n+\n \tdescribe('getNodeParameters - noDataExpression handling', () => {\n \t\tit('should strip expression prefix when noDataExpression is true and value is an expression', () => {\n \t\t\tconst nodePropertiesArray: INodeProperties[] = [\n"
+ },
+ "evidence": "## fix(core): Skip unknown fixedCollection keys instead of throwing\n\nMulti-value fixedCollection parameters threw 'Could not find property option' when a stored key no longer matched any option. In getNodeParameters (packages/workflow/src/node-helpers.ts), the option lookup now runs before the per-item loop and skips unknown keys via continue, matching the single-value branch. Added a regression test in packages/workflow/test/node-helpers.test.ts.\n\n### What changed\n- 1 source file(s), 1 test file(s), 81 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test on test/node-helpers.test.ts: 178/178 passed, including the new 'unknown fixedCollection keys' test. acdc-typecheck: no output (clean). acdc-lint could not run (tsgolint executable missing). Did not verify the new test fails on the original code.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 318/318\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- Lint was not run, so formatting of the edited block in node-helpers.ts is unchecked by the linter (indentation was corrected by hand).\n- Unknown keys are now silently dropped in the multi-value branch; a reviewer should confirm that silently dropping stale data is acceptable rather than logging it.\n- The skip happens before the per-item loop, so an unknown key with an empty array is also dropped, not preserved as an empty collection.\n- The new test was not confirmed to fail against the original code.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.03\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change is functionally identical to the merged fix: it hoists the option lookup out of the inner loop and continues on an unknown key instead of throwing. The only difference is a type cast adding '| undefined' and a comment, and no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0098607
+ }
+}

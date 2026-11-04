@@ -1,0 +1,88 @@
+{
+ "task": "n8n-33897",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed it in `packages/workflow`: execution errors can now be constructed with `Error.prototype` frozen. The error tests pass (25/25). Lint couldn't run, and typecheck reports errors in files I didn't change.\n\n**Cause:** Freezing `Error.prototype` makes the inherited `name` and `message` read-only. Plain assignments like `this.name = …` or `this.message = …` then throw in strict mode, unless the instance already has its own copy. `new Error('')` doesn't create an own `message`, so the `NodeApiError` and `NodeOperationError` paths threw.\n\n**Change:**\n- **New helper:** `errors/base/set-error-property.ts` adds `setErrorProperty`, which defines an own, writable, non-enumerable `name` or `message` on an error.\n- **Base class:** `ExecutionBaseError`'s constructor now uses it to give every instance its own `name` and `message`. Later reassignments in the subclasses (`NodeApiError`, `NodeOperationError`, `WorkflowOperationError`, the cancelled errors and so on) therefore don't throw, and I didn't need to edit those call sites.\n- **`WorkflowActivationError`:** It copies `name` and `constructor` onto a plain `Error`, which has no own copies. It now uses `setErrorProperty` for `name` and `Object.defineProperty` for `constructor`, keeping `constructor` enumerable as the old assignment did.\n- **Test:** `test/errors/frozen-error-prototype.test.ts` freezes `Error.prototype` in its own file, because freezing can't be undone. It constructs `NodeApiError` with an empty message, `NodeOperationError` with a message override, `WorkflowOperationError`, `ManualExecutionCancelledError` and `WorkflowActivationError`.\n\n**Verification:**\n- `acdc-test packages/workflow/test/errors` passes. The new test failed on the first run, which led me to the `WorkflowActivationError` `constructor` assignment.\n- `acdc-typecheck` reports errors in `expression.ts`, `interfaces.ts`, `filter-parameter.ts`, `workflow-data-proxy.ts` and two test files, none of which I touched. They look like missing `@n8n/utils` and `n8n-workflow` module resolution in this checkout, but I didn't confirm they exist without my change.\n- `acdc-lint` failed to start: \"Failed to find tsgolint executable\". So my changes are unlinted.\n\n{\"summary\": \"ExecutionBaseError now defines own writable name/message properties via a new setErrorProperty helper, so subclass reassignments no longer throw when Error.prototype is frozen. WorkflowActivationError's copying of name and constructor onto a plain Error was also made freeze-safe. Added a frozen-prototype regression test.\", \"verification\": \"acdc-test packages/workflow/test/errors passes (6 files, 25 tests), including the new frozen-prototype test. acdc-typecheck reports errors only in files I did not touch (missing @n8n/utils and n8n-workflow module resolution). acdc-lint could not run because the tsgolint executable was not found.\", \"tests_pass\": true, \"risks\": [\"name and message are now own non-enumerable properties on ExecutionBaseError instances; code relying on prototype-inherited values or on message enumerability could behave differently\", \"Error subclasses outside ExecutionBaseError (e.g. other BaseError subclasses) still use plain assignment and were not audited\", \"Lint was not run (tsgolint missing) and typecheck has errors in files I did not touch, so neither is a clean signal\", \"The new test freezes Error.prototype globally; it relies on vitest per-file isolation\"]}",
+  "cost_usd": 0.26293000000000005,
+  "turns": 55,
+  "tool_calls": 54,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 333100,
+  "tokens_out": 12165,
+  "model": "claude-sonnet-5-5",
+  "seconds": 144
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 2,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 10,
+   "total": 10
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 7
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/errors/abstract/execution-base.error.ts",
+   "packages/workflow/src/errors/base/set-error-property.ts",
+   "packages/workflow/src/errors/execution-cancelled.error.ts",
+   "packages/workflow/src/errors/node-operation.error.ts",
+   "packages/workflow/src/errors/workflow-activation.error.ts",
+   "packages/workflow/src/errors/workflow-operation.error.ts",
+   "packages/workflow/test/errors/frozen-error-prototype.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/errors/frozen-error-prototype.test.ts"
+  ],
+  "lines_changed": 81,
+  "reference_lines": 21,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed",
+    "9 files: above the size for automated approval"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.2032268917451731,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/errors/abstract/execution-base.error.ts b/packages/workflow/src/errors/abstract/execution-base.error.ts\nindex 74b9b8a03..40d68392d 100644\n--- a/packages/workflow/src/errors/abstract/execution-base.error.ts\n+++ b/packages/workflow/src/errors/abstract/execution-base.error.ts\n@@ -1,4 +1,5 @@\n import { BaseError, type BaseErrorOptions } from '../base/base.error';\n+import { setErrorProperty } from '../base/set-error-property';\n import type { Functionality, IDataObject, JsonObject } from '../../interfaces';\n \n interface ExecutionBaseErrorOptions extends BaseErrorOptions {\n@@ -27,7 +28,11 @@ export abstract class ExecutionBaseError extends BaseError {\n \tconstructor(message: string, options: ExecutionBaseErrorOptions = {}) {\n \t\tsuper(message, options);\n \n-\t\tthis.name = this.constructor.name;\n+\t\t// Define `name` and `message` as own properties so that subclasses can reassign\n+\t\t// them even when `Error.prototype` is frozen (inherited read-only props would\n+\t\t// make plain assignment throw). `Error` skips own `message` for an empty message.\n+\t\tsetErrorProperty(this, 'name', this.constructor.name);\n+\t\tsetErrorProperty(this, 'message', this.message);\n \t\tthis.timestamp = Date.now();\n \n \t\tconst { cause, errorResponse } = options;\ndiff --git a/packages/workflow/src/errors/base/set-error-property.ts b/packages/workflow/src/errors/base/set-error-property.ts\nnew file mode 100644\nindex 000000000..f9f760163\n--- /dev/null\n+++ b/packages/workflow/src/errors/base/set-error-property.ts\n@@ -0,0 +1,13 @@\n+/**\n+ * Sets an own, writable property on an error instance. Plain assignment throws\n+ * in strict mode when `Error.prototype` is frozen (inherited `name`/`message`\n+ * become read-only), so define the own property explicitly instead.\n+ */\n+export function setErrorProperty(error: Error, key: 'name' | 'message', value: string) {\n+\tObject.defineProperty(error, key, {\n+\t\tvalue,\n+\t\twritable: true,\n+\t\tconfigurable: true,\n+\t\tenumerable: false,\n+\t});\n+}\ndiff --git a/packages/workflow/src/errors/execution-cancelled.error.ts b/packages/workflow/src/errors/execution-cancelled.error.ts\nindex deb949d33..fb55d0d28 100644\n--- a/packages/workflow/src/errors/execution-cancelled.error.ts\n+++ b/packages/workflow/src/errors/execution-cancelled.error.ts\n@@ -1,5 +1,4 @@\n import { ExecutionBaseError } from './abstract/execution-base.error';\n-\n export type CancellationReason = 'manual' | 'timeout' | 'shutdown';\n \n export abstract class ExecutionCancelledError extends ExecutionBaseError {\ndiff --git a/packages/workflow/src/errors/node-operation.error.ts b/packages/workflow/src/errors/node-operation.error.ts\nindex 6c568d121..74da82da3 100644\n--- a/packages/workflow/src/errors/node-operation.error.ts\n+++ b/packages/workflow/src/errors/node-operation.error.ts\n@@ -1,6 +1,5 @@\n import { NodeError } from './abstract/node.error';\n-import { OperationalError } from './base/operational.error';\n-import type { NodeOperationErrorOptions } from './node-api.error';\n+import { OperationalError } from './base/operational.error';import type { NodeOperationErrorOptions } from './node-api.error';\n import type { INode, JsonObject } from '../interfaces';\n \n /**\ndiff --git a/packages/workflow/src/errors/workflow-activation.error.ts b/packages/workflow/src/errors/workflow-activation.error.ts\nindex 1c524aad9..de4e5294a 100644\n--- a/packages/workflow/src/errors/workflow-activation.error.ts\n+++ b/packages/workflow/src/errors/workflow-activation.error.ts\n@@ -1,4 +1,4 @@\n-import { ExecutionBaseError } from './abstract/execution-base.error';\n+import { ExecutionBaseError } from './abstract/execution-base.error';import { setErrorProperty } from './base/set-error-property';\n import type { ErrorLevel } from '@n8n/errors';\n import type { INode } from '../interfaces';\n \n@@ -24,8 +24,13 @@ export class WorkflowActivationError extends ExecutionBaseError {\n \t\tlet error = cause as Error;\n \t\tif (cause instanceof ExecutionBaseError) {\n \t\t\terror = new Error(cause.message);\n-\t\t\terror.constructor = cause.constructor;\n-\t\t\terror.name = cause.name;\n+\t\t\tObject.defineProperty(error, 'constructor', {\n+\t\t\t\tvalue: cause.constructor,\n+\t\t\t\twritable: true,\n+\t\t\t\tconfigurable: true,\n+\t\t\t\tenumerable: true,\n+\t\t\t});\n+\t\t\tsetErrorProperty(error, 'name', cause.name);\n \t\t\terror.stack = cause.stack;\n \t\t}\n \t\tsuper(message, { cause: error });\ndiff --git a/packages/workflow/src/errors/workflow-operation.error.ts b/packages/workflow/src/errors/workflow-operation.error.ts\nindex 8c241caa4..bf28188aa 100644\n--- a/packages/workflow/src/errors/workflow-operation.error.ts\n+++ b/packages/workflow/src/errors/workflow-operation.error.ts\n@@ -1,6 +1,5 @@\n import type { INode } from '../interfaces';\n import { ExecutionBaseError } from './abstract/execution-base.error';\n-\n /**\n  * Class for instantiating an operational error, e.g. a timeout error.\n  */\ndiff --git a/packages/workflow/test/errors/frozen-error-prototype.test.ts b/packages/workflow/test/errors/frozen-error-prototype.test.ts\nnew file mode 100644\nindex 000000000..67c1b1cb3\n--- /dev/null\n+++ b/packages/workflow/test/errors/frozen-error-prototype.test.ts\n@@ -0,0 +1,45 @@\n+import { NodeApiError } from '../../src/errors/node-api.error';\n+import { NodeOperationError } from '../../src/errors/node-operation.error';\n+import { WorkflowActivationError } from '../../src/errors/workflow-activation.error';\n+import { WorkflowOperationError } from '../../src/errors/workflow-operation.error';\n+import { ManualExecutionCancelledError } from '../../src/errors/execution-cancelled.error';\n+import type { INode } from '../../src/interfaces';\n+\n+// Freezing is irreversible, so this lives in its own file (vitest isolates files).\n+describe('errors with a frozen Error.prototype', () => {\n+\tconst node: INode = {\n+\t\tid: '1',\n+\t\tname: 'Node',\n+\t\ttype: 'n8n-nodes-base.set',\n+\t\ttypeVersion: 1,\n+\t\tposition: [0, 0],\n+\t\tparameters: {},\n+\t};\n+\n+\tbeforeAll(() => {\n+\t\tObject.freeze(Error.prototype);\n+\t});\n+\n+\tit('constructs NodeApiError with an empty message', () => {\n+\t\tconst error = new NodeApiError(node, { foo: 'bar' }, { httpCode: '404' });\n+\t\texpect(error.name).toBe('NodeApiError');\n+\t\texpect(error.message).toBe('The resource you are requesting could not be found');\n+\t});\n+\n+\tit('constructs NodeOperationError with a message override', () => {\n+\t\tconst error = new NodeOperationError(node, new Error('x'), { message: 'custom' });\n+\t\texpect(error.name).toBe('NodeOperationError');\n+\t\texpect(error.message).toBe('custom');\n+\t});\n+\n+\tit('constructs the other execution errors', () => {\n+\t\texpect(new WorkflowOperationError('boom').name).toBe('WorkflowOperationError');\n+\t\texpect(new ManualExecutionCancelledError('1').message).toBe(\n+\t\t\t'The execution was cancelled manually',\n+\t\t);\n+\t\tconst cause = new WorkflowOperationError('inner');\n+\t\tconst error = new WorkflowActivationError('outer', { cause });\n+\t\texpect(error.message).toBe('outer');\n+\t\texpect(error.name).toBe('WorkflowActivationError');\n+\t});\n+});\n"
+ },
+ "evidence": "## fix(core): Construct execution errors correctly when Error.prototype is frozen\n\nExecutionBaseError now defines own writable name/message properties via a new setErrorProperty helper, so subclass reassignments no longer throw when Error.prototype is frozen. WorkflowActivationError's copying of name and constructor onto a plain Error was also made freeze-safe. Added a frozen-prototype regression test.\n\n### What changed\n- 6 source file(s), 1 test file(s), 81 changed lines\n- `packages/workflow/src/errors/abstract/execution-base.error.ts`\n- `packages/workflow/src/errors/base/set-error-property.ts`\n- `packages/workflow/src/errors/execution-cancelled.error.ts`\n- `packages/workflow/src/errors/node-operation.error.ts`\n- `packages/workflow/src/errors/workflow-activation.error.ts`\n- `packages/workflow/src/errors/workflow-operation.error.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test packages/workflow/test/errors passes (6 files, 25 tests), including the new frozen-prototype test. acdc-typecheck reports errors only in files I did not touch (missing @n8n/utils and n8n-workflow module resolution). acdc-lint could not run because the tsgolint executable was not found.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 2/2; tests that passed before: 10/10\n\n### Risks that remain\n- Change risk: medium (20% chance of a revert or follow-up fix, from n8n's history)\n- name and message are now own non-enumerable properties on ExecutionBaseError instances; code relying on prototype-inherited values or on message enumerability could behave differently\n- Error subclasses outside ExecutionBaseError (e.g. other BaseError subclasses) still use plain assignment and were not audited\n- Lint was not run (tsgolint missing) and typecheck has errors in files I did not touch, so neither is a clean signal\n- The new test freezes Error.prototype globally; it relies on vitest per-file isolation\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n- 9 files: above the size for automated approval\n\n- Agent cost: $0.26\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": false,
+  "reason": "Defining `name` (and `constructor`) as own properties fixes the frozen `Error.prototype` crash, and no hidden test fails. A reviewer would still ask for changes. The diff has unrelated formatting damage (two imports joined onto one line, deleted blank lines) that would fail prettier/lint. `name` is now non-enumerable, whereas the original assignment made it enumerable, which could change serialization. Also, the extra `message` redefinition and new helper file go beyond what the issue needs.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0217407
+ }
+}

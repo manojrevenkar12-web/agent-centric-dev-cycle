@@ -1,0 +1,82 @@
+{
+ "task": "n8n-22711",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I changed one line in `$fromAI` and added a test. I'm not certain it's the bug the issue describes. The issue text was only a title, and I found the cause by reading the code, not by reproducing the editor error.\n\n**Cause:** when a node has no run data yet, as in the editor before execution, `handleFromAi` in `packages/workflow/src/workflow-data-proxy.ts` read `connectionInputData?.[runIndex]` and then `inputData.json`. `connectionInputData` holds items, so it should be indexed by `itemIndex`. A correct `$fromAI(...)` therefore read the wrong item, or hit a `TypeError` on undefined input, and showed as an error.\n\n**Fix:**\n- It now uses `connectionInputData?.[itemIndex]` and `inputData?.json`.\n- When no item exists, the existing \"No execution data available\" `ExpressionError` is thrown.\n- The new test in `test/workflow-data-proxy.test.ts` checks that `itemIndex` picks the right item and that empty input throws an `ExpressionError`.\n\n**Verification:**\n- `acdc-test test/workflow-data-proxy.test.ts`: 112 passed.\n- `acdc-typecheck`: it printed no errors, but I only looked at the last 5 lines.\n- `acdc-lint`: it didn't run. It failed with \"Failed to find tsgolint executable\", so lint is unverified.\n\n{\"summary\": \"In $fromAI's fallback path (no run data), index connectionInputData by itemIndex instead of runIndex and guard against a missing item with optional chaining so the proper ExpressionError is thrown instead of a TypeError. Added a test.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 112 passed. acdc-typecheck printed no errors (only the last 5 lines were checked). acdc-lint did not run: it failed with 'Failed to find tsgolint executable'.\", \"tests_pass\": true, \"risks\": [\"The issue had no description, so this may not be the exact scenario reported; the cause was found by reading code, not by reproducing the editor error\", \"Behaviour change: runIndex to itemIndex when indexing connectionInputData; confirm that no caller relies on runIndex\", \"Lint was not verified because tsgolint is missing in the environment\"]}",
+  "cost_usd": 0.1025444,
+  "turns": 11,
+  "tool_calls": 10,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 123359,
+  "tokens_out": 3270,
+  "model": "claude-sonnet-5-5",
+  "seconds": 59
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 110,
+   "total": 110
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 40,
+  "reference_lines": 2,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12987441102537045,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex 9794f66b4..69c1b63f2 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -1033,8 +1033,8 @@ export class WorkflowDataProxy {\n \t\t\tlet placeholdersDataInputData;\n \n \t\t\tif (!resultData) {\n-\t\t\t\tinputData = this.connectionInputData?.[runIndex];\n-\t\t\t\tplaceholdersDataInputData = inputData.json;\n+\t\t\t\tinputData = this.connectionInputData?.[itemIndex];\n+\t\t\t\tplaceholdersDataInputData = inputData?.json;\n \t\t\t} else {\n \t\t\t\tinputData =\n \t\t\t\t\tthat.runExecutionData?.resultData.runData[that.activeNodeName]?.[runIndex].inputOverride;\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex f9aadb0d8..10dc3f5ab 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -611,6 +611,42 @@ describe('WorkflowDataProxy', () => {\n \t\t\t);\n \t\t});\n \n+\t\ttest('Uses itemIndex (not runIndex) to read connectionInputData and throws ExpressionError when empty', () => {\n+\t\t\tconst makeProxy = (items: Array<{ json: Record<string, string> }>, itemIndex: number) =>\n+\t\t\t\tnew WorkflowDataProxy(\n+\t\t\t\t\tnew Workflow({\n+\t\t\t\t\t\tid: '123',\n+\t\t\t\t\t\tname: 'test workflow',\n+\t\t\t\t\t\tnodes: [\n+\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\tid: 'aiNode',\n+\t\t\t\t\t\t\t\tname: 'AI Node',\n+\t\t\t\t\t\t\t\ttype: 'n8n-nodes-base.aiAgent',\n+\t\t\t\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\t\t\t\tposition: [0, 0],\n+\t\t\t\t\t\t\t\tparameters: {},\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t],\n+\t\t\t\t\t\tconnections: {},\n+\t\t\t\t\t\tactive: false,\n+\t\t\t\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\t\t\t}),\n+\t\t\t\t\tnull,\n+\t\t\t\t\t0,\n+\t\t\t\t\titemIndex,\n+\t\t\t\t\t'AI Node',\n+\t\t\t\t\titems,\n+\t\t\t\t\t{},\n+\t\t\t\t\t'manual',\n+\t\t\t\t\t{},\n+\t\t\t\t\tundefined,\n+\t\t\t\t).getDataProxy();\n+\n+\t\t\tconst items = [{ json: { name: 'first' } }, { json: { name: 'second' } }];\n+\t\t\texpect(makeProxy(items, 1).$fromAI('name')).toEqual('second');\n+\t\t\texpect(() => makeProxy([], 0).$fromAI('name')).toThrow(ExpressionError);\n+\t\t});\n+\n \t\ttest('Returns default value when connection input data lacks expected keys', () => {\n \t\t\t// Create a workflow with connection input data that doesn't have the expected AI keys\n \t\t\tconst workflowWithLimitedData: IWorkflowBase = {\n"
+ },
+ "evidence": "## fix(editor): Fix correct $fromAi expression showing as error\n\nIn $fromAI's fallback path (no run data), index connectionInputData by itemIndex instead of runIndex and guard against a missing item with optional chaining so the proper ExpressionError is thrown instead of a TypeError. Added a test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 40 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 112 passed. acdc-typecheck printed no errors (only the last 5 lines were checked). acdc-lint did not run: it failed with 'Failed to find tsgolint executable'.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 110/110\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- The issue had no description, so this may not be the exact scenario reported; the cause was found by reading code, not by reproducing the editor error\n- Behaviour change: runIndex to itemIndex when indexing connectionInputData; confirm that no caller relies on runIndex\n- Lint was not verified because tsgolint is missing in the environment\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.10\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The `inputData?.json` optional chaining is the same crash fix the merged change makes, and no hidden tests fail. The extra switch from `runIndex` to `itemIndex` when reading `connectionInputData` is an unrequested behaviour change. It is arguably more correct, since that array is indexed by item, but a reviewer might ask for it to be justified or split out.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0136727
+ }
+}

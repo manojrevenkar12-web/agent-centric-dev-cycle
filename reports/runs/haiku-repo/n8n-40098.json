@@ -1,0 +1,81 @@
+{
+ "task": "n8n-40098",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`replace()` was missing from the pre-flight size check that `replaceAll()` gets, so a `$`-pattern replacement ran natively when it should have fallen back to the engine. The fix is in place, and the native-evaluation tests pass.\n\n**Cause:** In `assertPreflightSize` (`packages/workflow/src/expressions/native-evaluation/evaluator.ts`), only `replaceAll` got the special handling. `replace` is on the string allowlist in `grammar.ts`, so it was evaluated natively. The `$` check that sends replacements like `$&` and `` $` `` to the engine never ran for it.\n\n**Change:**\n- `evaluator.ts`: the `replaceAll` branch now also matches `replace`. That gives it the same `$`-splice bailout and the same upper-bound size check.\n- `test/native-evaluation-corpus.ts`: added `replace('o', '$&')` to `RUNTIME_BAILOUT_CORPUS`. The parity test asserts these expressions are not handled natively and match the engine result.\n\n**Verification:**\n- `acdc-test` on `native-evaluation-parity`, `native-evaluation-corpus-coverage` and `native-evaluation-fuzz`: 6 files, 366 tests, all pass.\n- I did not run the new corpus entry against the unfixed code. It should fail there, because the expression was handled natively before the change, but I haven't confirmed that.\n- `acdc-typecheck` reports `src/nodes-api-version.ts(49,6)`: `Operator '<=' cannot be applied to types 'number' and 'string'`. I didn't touch that file, so this is pre-existing, but I did not confirm it on a clean checkout.\n- `acdc-lint` did not run. The oxlint config `oxlint.config.mts` isn't present in this worktree, so the linter fails before checking any files.\n\nChanges are uncommitted in the working tree.\n\n```json\n{\"summary\": \"replace() on a string receiver was evaluated natively without the pre-flight checks that replaceAll() gets, so a replacement containing $-patterns (e.g. $&) was spliced natively instead of falling back to the engine. Extended the replaceAll pre-flight branch in evaluator.ts to cover replace, and added a replace('o', '$&') entry to RUNTIME_BAILOUT_CORPUS as a regression case.\", \"verification\": \"acdc-test on native-evaluation-parity, native-evaluation-corpus-coverage and native-evaluation-fuzz: 6 files, 366 tests passed. acdc-typecheck reports one error in src/nodes-api-version.ts (unrelated, untouched by me; not checked on a clean checkout). acdc-lint could not run because oxlint.config.mts is missing from the worktree. The new corpus entry was not run against the unfixed code.\", \"tests_pass\": true, \"risks\": [\"The replace branch uses the looser (receiver.length+1)*(replacement.length+1) bound rather than the tight receiver+replacement bound; this could bail earlier than necessary for large inputs, which is safe but may reduce native coverage.\", \"Confirm the typecheck error in src/nodes-api-version.ts exists on the base branch.\", \"Lint has not been run; the changed evaluator.ts and corpus file should be linted in a full checkout.\", \"Changes are uncommitted.\"]}\n```",
+  "cost_usd": 0.01182941,
+  "turns": 15,
+  "tool_calls": 14,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 279569,
+  "tokens_out": 6996,
+  "model": "claude-haiku-5-5",
+  "seconds": 220
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 180,
+   "total": 180
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-corpus.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-corpus.ts"
+  ],
+  "lines_changed": 4,
+  "reference_lines": 18,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.09236707606618833,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 298451317..355203f6d 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -175,7 +175,7 @@ function assertPreflightSize(receiver: unknown, method: string, args: unknown[])\n \t} else if (method === 'flat' && isArray(receiver)) {\n \t\tconst depth = args.length === 0 ? 1 : toNum(args[0]);\n \t\tupperBound = flatSize(receiver, depth);\n-\t} else if (method === 'replaceAll' && typeof receiver === 'string') {\n+\t} else if ((method === 'replace' || method === 'replaceAll') && typeof receiver === 'string') {\n \t\t// A missing replacement inserts the string \"undefined\".\n \t\tconst replacement = args.length < 2 ? 'undefined' : toStr(args[1]);\n \ndiff --git a/packages/workflow/test/native-evaluation-corpus.ts b/packages/workflow/test/native-evaluation-corpus.ts\nindex 6ff2dacfd..d2fcce0c1 100644\n--- a/packages/workflow/test/native-evaluation-corpus.ts\n+++ b/packages/workflow/test/native-evaluation-corpus.ts\n@@ -173,6 +173,8 @@ export const RUNTIME_BAILOUT_CORPUS: string[] = [\n \t\"={{ $json.item.big.replaceAll('', $json.item.filler) }}\",\n \t// `$\\`` splices the text before each match into the result.\n \t\"={{ $json.item.name.replaceAll('o', '$`') }}\",\n+\t// Same for replace(): `$&` splices the match into the replacement.\n+\t\"={{ $json.item.name.replace('o', '$&') }}\",\n \t// A receiver above MAX_RESULT_LENGTH is the engine's work, whatever the\n \t// method. (concat is bounded the same way, by receiver plus arguments; a\n \t// corpus entry would make quickjs marshal a million-element result.)\n"
+ },
+ "evidence": "## fix(core): Bound replace() like replaceAll() in native expression evaluation (no-changelog)\n\nreplace() on a string receiver was evaluated natively without the pre-flight checks that replaceAll() gets, so a replacement containing $-patterns (e.g. $&) was spliced natively instead of falling back to the engine. Extended the replaceAll pre-flight branch in evaluator.ts to cover replace, and added a replace('o', '$&') entry to RUNTIME_BAILOUT_CORPUS as a regression case.\n\n### What changed\n- 1 source file(s), 1 test file(s), 4 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on native-evaluation-parity, native-evaluation-corpus-coverage and native-evaluation-fuzz: 6 files, 366 tests passed. acdc-typecheck reports one error in src/nodes-api-version.ts (unrelated, untouched by me; not checked on a clean checkout). acdc-lint could not run because oxlint.config.mts is missing from the worktree. The new corpus entry was not run against the unfixed code.\n- Type check: passes; lint: passes\n- Tests for the issue: 1/1; tests that passed before: 180/180\n\n### Risks that remain\n- Change risk: medium (9% chance of a revert or follow-up fix, from n8n's history)\n- The replace branch uses the looser (receiver.length+1)*(replacement.length+1) bound rather than the tight receiver+replacement bound; this could bail earlier than necessary for large inputs, which is safe but may reduce native coverage.\n- Confirm the typecheck error in src/nodes-api-version.ts exists on the base branch.\n- Lint has not been run; the changed evaluator.ts and corpus file should be linted in a full checkout.\n- Changes are uncommitted.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change applies the same preflight size bound and `$` fallback to `replace()` that `replaceAll()` already had, which is what the issue title asks for, and no hidden tests fail. The bound `(n+1)*(m+1)` is looser than needed because `replace` substitutes only once, so it could reject some large-but-legitimate inputs. A reviewer might suggest tightening it, but that does not block approval.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0143367
+ }
+}

@@ -1,0 +1,83 @@
+{
+ "task": "n8n-40962",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I've made the fix, but I could not finish verification: the shell was denied partway through, and one test failed in a run I could not inspect.\n\n**Cause:** `extendTransform` in `packages/workflow/src/extensions/expression-extension.ts` rewrites expressions with recast and reprints them. When a `??` node has a bare `&&` or `||` operand, the reprint drops the parentheses that the source had. For example, `($json.a && $json.b) ?? $json.c?.d` comes out as `$json.a && $json.b ?? ...`, which is a syntax error. The engines then reject the expression as \"invalid syntax\". I inferred this from the behavior and the existing comment in `parser.ts`; I could not read recast's printer to confirm it.\n\n**Change:**\n- `expression-extension.ts`: a new pass before `print(ast)` wraps any `&&`/`||` operand of a `??` (and any `??` operand of `&&`/`||`) in a `parenthesizedExpression` node, so recast keeps the parentheses.\n- `test/ExpressionExtensions/expression-extension.test.ts`: a `test.each` over five mixed-operator expressions, each checked by `new Function(code)` not throwing.\n\n**Verification:**\n- `acdc-test test/ExpressionExtensions/expression-extension.test.ts`: 88 tests passed across 2 files (the run included the new cases).\n- `acdc-test` on `native-evaluation-parity`, `native-evaluation-corpus-coverage`, and `expression-compatibility`: 1328 passed, **1 failed**. I could not see which test failed. Bash was then denied, so I could not get the failure details or check whether it predates my change.\n- Not run: `acdc-typecheck` and `acdc-lint`. Both calls were denied.\n\n**Open items:**\n1. Identify the one failing parity test and confirm whether my change causes it. The corpus includes mixed `??`/`&&` expressions, so the new output could be what it now compares against.\n2. Run `acdc-typecheck` (the `parenthesizedExpression` builder typing is unverified) and `acdc-lint` on the two changed files.\n\n```json\n{\"summary\": \"Fixed extendTransform dropping parentheses around && / || operands of ??. Recast reprints a logical node without the parens that separated ?? from && or ||, producing a syntax error. Added a pass that wraps such operands in ParenthesizedExpression before printing, and a test.each regression test covering mixed-operator expressions in both directions.\", \"verification\": \"acdc-test on expression-extension.test.ts: 88 passed (2 files, including new cases). acdc-test on native-evaluation-parity, native-evaluation-corpus-coverage, expression-compatibility: 1328 passed, 1 failed (test name not visible). acdc-typecheck and acdc-lint not run: shell access was denied.\", \"tests_pass\": false, \"risks\": [\"One test failed in the parity/compatibility run and its name is unknown; it must be identified and checked against this change.\", \"acdc-typecheck not run: ast-types builder typing for parenthesizedExpression is unverified.\", \"acdc-lint not run on the changed files.\", \"Recast's printing of ParenthesizedExpression is assumed from memory, not confirmed by reading recast source; the new tests exercise it end to end.\", \"The new pass runs on every extendTransform call, so it affects all expressions with mixed ??/&&/|| logical nodes, not only the ones in the issue.\"]}\n```",
+  "cost_usd": 0.019688820000000003,
+  "turns": 24,
+  "tool_calls": 23,
+  "tests_run": 4,
+  "denials": 5,
+  "tokens_in": 566906,
+  "tokens_out": 14347,
+  "model": "claude-haiku-5-5",
+  "seconds": 146
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 4,
+   "total": 5
+  },
+  "pass_to_pass": {
+   "passed": 240,
+   "total": 240
+  },
+  "failing": [
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts :: Expression Parser Test newer ES syntax Nullish coalescing with an && or || operand next to an optional chain should print the parentheses once"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/extensions/expression-extension.ts",
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts"
+  ],
+  "lines_changed": 38,
+  "reference_lines": 17,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": false,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/extensions/expression-extension.ts b/packages/workflow/src/extensions/expression-extension.ts\nindex 9b2dd1a4c..d19618e1f 100644\n--- a/packages/workflow/src/extensions/expression-extension.ts\n+++ b/packages/workflow/src/extensions/expression-extension.ts\n@@ -431,6 +431,27 @@ export const extendTransform = (expression: string): { code: string } | undefine\n \t\t\t},\n \t\t});\n \n+\t\t// Recast reprints a logical node without the parentheses that separated a\n+\t\t// `??` from an `&&` or `||` operand, e.g. `(a && b) ?? c` becomes\n+\t\t// `a && b ?? c`, which is a syntax error. Keep those parentheses explicit.\n+\t\tvisit(ast, {\n+\t\t\tvisitLogicalExpression(path) {\n+\t\t\t\tthis.traverse(path);\n+\n+\t\t\t\tconst { node } = path;\n+\t\t\t\tconst needsParens = (child: ExpressionKind): boolean =>\n+\t\t\t\t\tchild.type === 'LogicalExpression' &&\n+\t\t\t\t\t(node.operator === '??') !== (child.operator === '??');\n+\n+\t\t\t\tif (needsParens(node.left)) {\n+\t\t\t\t\tnode.left = types.builders.parenthesizedExpression(node.left);\n+\t\t\t\t}\n+\t\t\t\tif (needsParens(node.right)) {\n+\t\t\t\t\tnode.right = types.builders.parenthesizedExpression(node.right);\n+\t\t\t\t}\n+\t\t\t},\n+\t\t});\n+\n \t\treturn print(ast);\n \t} catch (e) {\n \t\treturn;\ndiff --git a/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts b/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\nindex 2361173be..adfffe2e3 100644\n--- a/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\n+++ b/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\n@@ -191,6 +191,23 @@ describe('Expression Parser', () => {\n \t\t});\n \t});\n \n+\tdescribe('Parentheses around ?? operands mixed with && or ||', () => {\n+\t\ttest.each([\n+\t\t\t'($json.a && $json.b) ?? $json.c?.d',\n+\t\t\t'$json.c?.d ?? ($json.a || $json.b)',\n+\t\t\t'($json.a || $json.b) ?? $json.c?.d',\n+\t\t\t'($json.a ?? $json.b) && $json.c?.d',\n+\t\t\t'($json.a ?? $json.b) || $json.c?.d',\n+\t\t\t'($json.a && $json.b) ?? $json.c.toUpperCase()',\n+\t\t])('keeps the parentheses in %s', (expression) => {\n+\t\t\tconst code = extendTransform(expression)?.code;\n+\n+\t\t\texpect(code).toBeDefined();\n+\t\t\t// Re-parsing fails with a SyntaxError if the parentheses were dropped.\n+\t\t\texpect(() => new Function(code!)).not.toThrow();\n+\t\t});\n+\t});\n+\n \tdescribe('Non dot extensions', () => {\n \t\ttest('min', () => {\n \t\t\texpect(evaluate('={{ min(1, 2, 3, 4, 5, 6) }}')).toEqual(1);\n"
+ },
+ "evidence": "## fix(core): Keep parentheses around && and || operands of ?? in expressions\n\nFixed extendTransform dropping parentheses around && / || operands of ??. Recast reprints a logical node without the parens that separated ?? from && or ||, producing a syntax error. Added a pass that wraps such operands in ParenthesizedExpression before printing, and a test.each regression test covering mixed-operator expressions in both directions.\n\n### What changed\n- 1 source file(s), 1 test file(s), 38 changed lines\n- `packages/workflow/src/extensions/expression-extension.ts`\n\n### What ran\n- The agent ran the tests 4 time(s) and says: acdc-test on expression-extension.test.ts: 88 passed (2 files, including new cases). acdc-test on native-evaluation-parity, native-evaluation-corpus-coverage, expression-compatibility: 1328 passed, 1 failed (test name not visible). acdc-typecheck and acdc-lint not run: shell access was denied.\n- Type check: passes; lint: passes\n- Tests for the issue: 4/5; tests that passed before: 240/240\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- One test failed in the parity/compatibility run and its name is unknown; it must be identified and checked against this change.\n- acdc-typecheck not run: ast-types builder typing for parenthesizedExpression is unverified.\n- acdc-lint not run on the changed files.\n- Recast's printing of ParenthesizedExpression is assumed from memory, not confirmed by reading recast source; the new tests exercise it end to end.\n- The new pass runs on every extendTransform call, so it affects all expressions with mixed ??/&&/|| logical nodes, not only the ones in the issue.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.02\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "tests_too_strict",
+  "reviewer_would_accept": true,
+  "reason": "Wrapping `&&`/`||` operands of `??` in explicit parenthesizedExpression nodes restores the parentheses and fixes the syntax error, in both directions. The failing test is about the optional-chain case printing the parentheses exactly once. I couldn't run it, so I'm inferring that the engineer's nodes can produce doubled parentheses, which are valid JS, so this is a formatting difference rather than a correctness bug.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0218689
+ }
+}

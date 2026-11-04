@@ -1,0 +1,83 @@
+{
+ "task": "n8n-41080",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The fix is in and the native-evaluation suites pass, but I could not confirm the typecheck result. Bash was denied partway through, so I couldn't capture its exit code or rerun `git status`.\n\n**The cause:** `evalNodeRefCall` in `packages/workflow/src/expressions/native-evaluation/evaluator.ts` ran the host's `first()`/`last()`/`all()` on a node reference and returned the result without charging it to `env.work`. Every other method path charges its data, so a callback body calling `$('Source').all()` per element was never counted against `MAX_WORK` and could copy run data an unbounded number of times on the main thread.\n\n**The change:**\n- `evalNodeRefCall` now takes `env`. It computes the result's content weight, falls back to the engine if that exceeds `MAX_RESULT_LENGTH`, and otherwise charges the weight before returning. This mirrors `evalExtension`.\n- The call site passes `env` through.\n- A new test in `packages/workflow/test/native-evaluation-parity.test.ts` (\"node reference calls are charged against the work budget\") checks that a single `all().length` is handled natively, and that the same call repeated across 100 callback visits hands off to the engine.\n\n**Verification:**\n- `acdc-test` on `native-evaluation-parity`, `native-evaluation-corpus-coverage` and `native-evaluation-fuzz`: 5 files, 919 tests, all passed.\n- `acdc-lint` on the two changed files: 0 warnings, 0 errors.\n- `acdc-typecheck`: it ran, but I only saw empty output, which I read as success. The exit code was never captured, so treat it as unconfirmed.\n- I did not run the new test against the unfixed code to confirm it fails without the change.\n\n**Risks for review:**\n- The weight is computed after the host call, so the fetch itself is not charged; the cost is only counted once the result exists. Charging before the call would need a size estimate the proxy does not expose.\n- `contentWeight` walks the returned value with `for…in`/`hasOwn`. The file says node-reference proxies misreport `hasOwn`, so confirm `all()` returns plain data rather than get-trap proxies.\n- The threshold is `MAX_WORK` (10M characters), so a single large `all()` result can use a noticeable share of the budget. Confirm that is the intended scale.\n\n```json\n{\"summary\": \"Node reference calls (first/last/all on $()/$input/$node) were never charged against the native evaluation work budget. evalNodeRefCall now charges the result's content weight to env.work and falls back to the engine if it exceeds MAX_RESULT_LENGTH, matching evalExtension. Added a regression test that repeats all() per callback visit and expects a hand-off.\", \"verification\": \"acdc-test on native-evaluation-parity, native-evaluation-corpus-coverage and native-evaluation-fuzz: 5 files, 919 tests passed. acdc-lint on the two changed files: 0 warnings, 0 errors. acdc-typecheck produced no output but its exit code was not captured; the bash tool was then denied, so git status was not re-run after the edits.\", \"tests_pass\": true, \"risks\": [\"Charge happens after the host call, so the fetch itself is not budgeted, only the returned size.\", \"contentWeight uses for-in/hasOwn; confirm node-reference results are plain data and not get-trap proxies that misreport hasOwn.\", \"A single large all() can consume a noticeable share of MAX_WORK (10M); confirm the intended scale.\", \"Typecheck result unconfirmed (no exit code captured).\"]}\n```",
+  "cost_usd": 0.01643058,
+  "turns": 18,
+  "tool_calls": 17,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 409649,
+  "tokens_out": 8824,
+  "model": "claude-haiku-5-5",
+  "seconds": 93
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 457,
+   "total": 457
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards node reference calls in a callback body are charged per item"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 33,
+  "reference_lines": 14,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.16109806008739397,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 1a3d10954..e8eeea689 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -363,7 +363,7 @@ function evalReceiver(\n \n function evalCall(node: Extract<SimpleNode, { kind: 'call' }>, env: Env): unknown {\n \tif (node.receiver.kind === 'nodeRef') {\n-\t\treturn evalNodeRefCall(evalReceiver(node, env), node.method);\n+\t\treturn evalNodeRefCall(evalReceiver(node, env), node.method, env);\n \t}\n \n \tif (node.receiver.kind === 'timeRoot') {\n@@ -471,12 +471,20 @@ function evalIterate(node: Extract<SimpleNode, { kind: 'iterate' }>, env: Env):\n  * `first()`, `last()` and `all()` on a node proxy. The proxy hands back a\n  * host function that reads run data for the node the reference names, which\n  * is what the engines call too (the vm bridge routes it through typed RPC).\n+ * The result is run data, so its content is charged against the work budget\n+ * like an extension's receiver: a body calling `all()` per element would\n+ * otherwise copy the same payload once per visit.\n  */\n-function evalNodeRefCall(proxy: unknown, method: string): unknown {\n+function evalNodeRefCall(proxy: unknown, method: string, env: Env): unknown {\n \tconst fn: unknown = Reflect.get(proxy as object, method);\n \tif (typeof fn !== 'function') throw new EngineFallbackError();\n \n-\treturn bounded(fn.call(proxy));\n+\tconst result: unknown = fn.call(proxy);\n+\tconst weight = contentWeight(result, MAX_RESULT_LENGTH);\n+\tif (weight > MAX_RESULT_LENGTH) throw new EngineFallbackError();\n+\tenv.charge(weight);\n+\n+\treturn bounded(result);\n }\n \n /**\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex e75209856..07b105312 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -676,6 +676,25 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\t).toEqual({ handled: true, value: [600_000, 600_000] });\n \t\t});\n \n+\t\t// A node reference call returns run data whose content is charged like a\n+\t\t// method input, so a body repeating `all()` per element hands off once\n+\t\t// the budget is spent, however few elements the loop has.\n+\t\ttest('node reference calls are charged against the work budget', () => {\n+\t\t\tconst payload = 'x'.repeat(600_000);\n+\t\t\tconst $ = () => ({ all: () => [{ json: { payload } }] });\n+\t\t\tconst many = new Array<number>(100).fill(0);\n+\t\t\texpect(nativeOn(\"{{ $('Source').all().length }}\", { $ })).toEqual({\n+\t\t\t\thandled: true,\n+\t\t\t\tvalue: 1,\n+\t\t\t});\n+\t\t\texpect(\n+\t\t\t\tnativeOn(\"{{ $json.many.some(n => $('Source').all().length === n) }}\", {\n+\t\t\t\t\t$json: { many },\n+\t\t\t\t\t$,\n+\t\t\t\t}),\n+\t\t\t).toEqual({ handled: false });\n+\t\t});\n+\n \t\ttest('an inherited member on a callback element hands off to the engine', () => {\n \t\t\tconst list = [Object.create({ inherited: 1 }) as object];\n \t\t\texpect(nativeOn('{{ $json.list.map(n => n.inherited) }}', { $json: { list } })).toEqual({\n"
+ },
+ "evidence": "## fix(core): Charge node reference calls against the native evaluation work budget (no-changelog)\n\nNode reference calls (first/last/all on $()/$input/$node) were never charged against the native evaluation work budget. evalNodeRefCall now charges the result's content weight to env.work and falls back to the engine if it exceeds MAX_RESULT_LENGTH, matching evalExtension. Added a regression test that repeats all() per callback visit and expects a hand-off.\n\n### What changed\n- 1 source file(s), 1 test file(s), 33 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on native-evaluation-parity, native-evaluation-corpus-coverage and native-evaluation-fuzz: 5 files, 919 tests passed. acdc-lint on the two changed files: 0 warnings, 0 errors. acdc-typecheck produced no output but its exit code was not captured; the bash tool was then denied, so git status was not re-run after the edits.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 457/457\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (16% chance of a revert or follow-up fix, from n8n's history)\n- Charge happens after the host call, so the fetch itself is not budgeted, only the returned size.\n- contentWeight uses for-in/hasOwn; confirm node-reference results are plain data and not get-trap proxies that misreport hasOwn.\n- A single large all() can consume a noticeable share of MAX_WORK (10M); confirm the intended scale.\n- Typecheck result unconfirmed (no exit code captured).\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.02\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change charges the result of node reference calls but omits the charge for node reference member access (`.item`, `.json`) in `evalMember`, so the callback-body case in the hidden test is not charged per visit. It also adds an unrequested fallback threshold on content weight, changing behaviour beyond charging the budget.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0145207
+ }
+}

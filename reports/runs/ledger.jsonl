@@ -1,0 +1,112 @@
+{"at":"2026-11-04T08:42:57.508Z","setup":"sonnet-repo","task":"n8n-42923","cost_usd":0.15511719999999998}
+{"at":"2026-11-04T08:45:36.219Z","setup":"sonnet-bare","task":"n8n-42923","cost_usd":0.3441662000000001}
+{"at":"2026-11-04T08:50:45.647Z","setup":"haiku-repo","task":"n8n-42923","cost_usd":0.049319540000000016}
+{"at":"2026-11-04T08:52:08.863Z","setup":"opus-repo","task":"n8n-42923","cost_usd":0.5172264}
+{"at":"2026-11-04T08:52:24.275Z","setup":"sonnet-repo","task":"n8n-41840","cost_usd":0}
+{"at":"2026-11-04T08:53:26.973Z","setup":"sonnet-bare","task":"n8n-41840","cost_usd":0.0978099}
+{"at":"2026-11-04T08:53:45.327Z","setup":"haiku-repo","task":"n8n-41840","cost_usd":0.00745765}
+{"at":"2026-11-04T08:54:48.717Z","setup":"opus-repo","task":"n8n-41840","cost_usd":0.1939884}
+{"at":"2026-11-04T08:55:50.824Z","setup":"sonnet-repo","task":"n8n-41395","cost_usd":0.1172197}
+{"at":"2026-11-04T08:57:13.743Z","setup":"sonnet-bare","task":"n8n-41395","cost_usd":0.1409094}
+{"at":"2026-11-04T08:57:35.952Z","setup":"haiku-repo","task":"n8n-41395","cost_usd":0.01155547}
+{"at":"2026-11-04T08:58:36.196Z","setup":"opus-repo","task":"n8n-41395","cost_usd":0.206343}
+{"at":"2026-11-04T09:01:09.512Z","setup":"sonnet-bare","task":"n8n-40962","cost_usd":0.1287563}
+{"at":"2026-11-04T09:04:30.173Z","setup":"haiku-repo","task":"n8n-40962","cost_usd":0.019688820000000003}
+{"at":"2026-11-04T09:09:36.060Z","setup":"sonnet-repo","task":"n8n-40962","cost_usd":0.4359296000000001}
+{"at":"2026-11-04T09:11:24.598Z","setup":"opus-repo","task":"n8n-40962","cost_usd":0.5443308}
+{"at":"2026-11-04T09:12:05.517Z","setup":"sonnet-repo","task":"n8n-41083","cost_usd":0.1552114}
+{"at":"2026-11-04T09:12:48.962Z","setup":"sonnet-bare","task":"n8n-41083","cost_usd":0.1324763}
+{"at":"2026-11-04T09:15:17.502Z","setup":"haiku-repo","task":"n8n-41083","cost_usd":0.036188990000000004}
+{"at":"2026-11-04T09:17:32.301Z","setup":"sonnet-repo","task":"n8n-41079","cost_usd":0.15633940000000002}
+{"at":"2026-11-04T09:18:26.979Z","setup":"opus-repo","task":"n8n-41083","cost_usd":1.0314363999999998}
+{"at":"2026-11-04T09:20:25.424Z","setup":"sonnet-bare","task":"n8n-41079","cost_usd":0.1899347}
+{"at":"2026-11-04T09:21:39.530Z","setup":"haiku-repo","task":"n8n-41079","cost_usd":0.019349800000000004}
+{"at":"2026-11-04T09:23:36.216Z","setup":"opus-repo","task":"n8n-41079","cost_usd":0.44586040000000005}
+{"at":"2026-11-04T09:24:30.413Z","setup":"sonnet-repo","task":"n8n-41080","cost_usd":0.15906220000000004}
+{"at":"2026-11-04T09:25:42.980Z","setup":"sonnet-bare","task":"n8n-41080","cost_usd":0.16845759999999999}
+{"at":"2026-11-04T09:26:44.941Z","setup":"haiku-repo","task":"n8n-41080","cost_usd":0.01643058}
+{"at":"2026-11-04T09:27:47.077Z","setup":"opus-repo","task":"n8n-41080","cost_usd":0.47033280000000005}
+{"at":"2026-11-04T09:28:24.970Z","setup":"sonnet-repo","task":"n8n-40099","cost_usd":0.16370259999999998}
+{"at":"2026-11-04T09:32:47.396Z","setup":"sonnet-bare","task":"n8n-40099","cost_usd":0.1773982}
+{"at":"2026-11-04T09:33:16.029Z","setup":"haiku-repo","task":"n8n-40099","cost_usd":0}
+{"at":"2026-11-04T09:37:09.396Z","setup":"sonnet-repo","task":"n8n-40098","cost_usd":0.09502660000000002}
+{"at":"2026-11-04T09:37:34.054Z","setup":"opus-repo","task":"n8n-40099","cost_usd":0.44637279999999996}
+{"at":"2026-11-04T09:41:13.786Z","setup":"sonnet-bare","task":"n8n-40098","cost_usd":0.1264157}
+{"at":"2026-11-04T09:44:22.057Z","setup":"haiku-repo","task":"n8n-40098","cost_usd":0.01182941}
+{"at":"2026-11-04T09:44:38.535Z","setup":"opus-repo","task":"n8n-40098","cost_usd":0}
+{"at": "2026-11-04T09:45:04.016382Z", "setup": "haiku-repo", "task": "n8n-40099", "cost_usd": 0, "infra_failure": "ended without a result (recorded before the rerun rule existed)"}
+{"at": "2026-11-04T09:45:04.030635Z", "setup": "opus-repo", "task": "n8n-40098", "cost_usd": 0, "infra_failure": "ended without a result (recorded before the rerun rule existed)"}
+{"at": "2026-11-04T09:45:04.049782Z", "setup": "sonnet-repo", "task": "n8n-41840", "cost_usd": 0, "infra_failure": "ended without a result (recorded before the rerun rule existed)"}
+{"at":"2026-11-04T09:46:17.288Z","setup":"sonnet-repo","task":"n8n-41840","cost_usd":0.0630582}
+{"at":"2026-11-04T09:51:27.464Z","setup":"haiku-repo","task":"n8n-40099","cost_usd":0.02059378}
+{"at":"2026-11-04T09:55:10.564Z","setup":"sonnet-repo","task":"n8n-33897","cost_usd":0.06560500000000001}
+{"at":"2026-11-04T09:56:25.080Z","setup":"opus-repo","task":"n8n-40098","cost_usd":0.30547820000000003}
+{"at":"2026-11-04T09:56:35.533Z","setup":"sonnet-bare","task":"n8n-33897","cost_usd":0.09918510000000001}
+{"at":"2026-11-04T09:57:29.227Z","setup":"haiku-repo","task":"n8n-33897","cost_usd":0.01252266}
+{"at":"2026-11-04T09:59:12.587Z","setup":"sonnet-repo","task":"n8n-32970","cost_usd":0.17011669999999998}
+{"at":"2026-11-04T10:00:24.187Z","setup":"sonnet-bare","task":"n8n-32970","cost_usd":0.1005404}
+{"at":"2026-11-04T10:00:50.942Z","setup":"opus-repo","task":"n8n-33897","cost_usd":0.3913992}
+{"at":"2026-11-04T10:02:48.665Z","setup":"haiku-repo","task":"n8n-32970","cost_usd":0.026289430000000006}
+{"at":"2026-11-04T10:03:55.278Z","setup":"sonnet-repo","task":"n8n-31681","cost_usd":0.0925993}
+{"at":"2026-11-04T10:04:18.731Z","setup":"opus-repo","task":"n8n-32970","cost_usd":0.3118436}
+{"at": "2026-11-04T10:04:54.090270+00:00", "setup": "opus-repo", "task": "n8n-33897", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.091146+00:00", "setup": "opus-repo", "task": "n8n-32970", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.092311+00:00", "setup": "haiku-repo", "task": "n8n-33897", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.093134+00:00", "setup": "haiku-repo", "task": "n8n-32970", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.094507+00:00", "setup": "sonnet-bare", "task": "n8n-33897", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.095064+00:00", "setup": "sonnet-bare", "task": "n8n-32970", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.096098+00:00", "setup": "sonnet-repo", "task": "n8n-33897", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.096642+00:00", "setup": "sonnet-repo", "task": "n8n-32970", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at": "2026-11-04T10:04:54.097200+00:00", "setup": "sonnet-repo", "task": "n8n-31681", "cost_usd": 0, "harness_rerun": "older checkouts had no type-check wrapper target; rerun after the fix"}
+{"at":"2026-11-04T10:08:27.923Z","setup":"sonnet-bare","task":"n8n-33897","cost_usd":0.26293000000000005}
+{"at":"2026-11-04T10:09:47.589Z","setup":"haiku-repo","task":"n8n-33897","cost_usd":0.007975030000000001}
+{"at":"2026-11-04T10:10:16.826Z","setup":"sonnet-repo","task":"n8n-33897","cost_usd":0.1352958}
+{"at":"2026-11-04T10:11:53.055Z","setup":"opus-repo","task":"n8n-33897","cost_usd":0.19630139999999996}
+{"at":"2026-11-04T10:12:32.898Z","setup":"sonnet-repo","task":"n8n-32970","cost_usd":0.1736748}
+{"at":"2026-11-04T10:13:41.191Z","setup":"sonnet-bare","task":"n8n-32970","cost_usd":0.17350999999999997}
+{"at":"2026-11-04T10:16:16.207Z","setup":"opus-repo","task":"n8n-32970","cost_usd":0.28288420000000003}
+{"at":"2026-11-04T10:18:27.668Z","setup":"sonnet-repo","task":"n8n-31681","cost_usd":0.1126607}
+{"at":"2026-11-04T10:19:20.127Z","setup":"haiku-repo","task":"n8n-32970","cost_usd":0.055054099999999995}
+{"at":"2026-11-04T10:20:10.697Z","setup":"sonnet-bare","task":"n8n-31681","cost_usd":0.09845080000000002}
+{"at":"2026-11-04T10:21:03.360Z","setup":"haiku-repo","task":"n8n-31681","cost_usd":0.01044204}
+{"at":"2026-11-04T10:22:21.945Z","setup":"opus-repo","task":"n8n-31681","cost_usd":0.3087388}
+{"at":"2026-11-04T10:22:58.426Z","setup":"sonnet-repo","task":"n8n-29689","cost_usd":0.1325745}
+{"at":"2026-11-04T10:23:58.284Z","setup":"sonnet-bare","task":"n8n-29689","cost_usd":0.1161617}
+{"at":"2026-11-04T10:25:54.429Z","setup":"haiku-repo","task":"n8n-29689","cost_usd":0.025462380000000007}
+{"at":"2026-11-04T10:26:57.201Z","setup":"opus-repo","task":"n8n-29689","cost_usd":0.38134799999999996}
+{"at":"2026-11-04T10:28:01.569Z","setup":"sonnet-repo","task":"n8n-27708","cost_usd":0.14139300000000002}
+{"at":"2026-11-04T10:28:52.673Z","setup":"sonnet-bare","task":"n8n-27708","cost_usd":0.1599567}
+{"at":"2026-11-04T10:30:33.227Z","setup":"haiku-repo","task":"n8n-27708","cost_usd":0.01643532}
+{"at":"2026-11-04T10:30:54.860Z","setup":"opus-repo","task":"n8n-27708","cost_usd":0.2387848}
+{"at":"2026-11-04T10:32:50.924Z","setup":"sonnet-repo","task":"n8n-27338","cost_usd":0.22274979999999997}
+{"at":"2026-11-04T10:33:16.261Z","setup":"sonnet-bare","task":"n8n-27338","cost_usd":0.19264830000000002}
+{"at":"2026-11-04T10:35:16.951Z","setup":"haiku-repo","task":"n8n-27338","cost_usd":0.022722539999999996}
+{"at":"2026-11-04T10:36:44.188Z","setup":"sonnet-repo","task":"n8n-26550","cost_usd":0.056359700000000006}
+{"at":"2026-11-04T10:37:36.009Z","setup":"opus-repo","task":"n8n-27338","cost_usd":0.627864}
+{"at":"2026-11-04T10:38:01.622Z","setup":"sonnet-bare","task":"n8n-26550","cost_usd":0.0682922}
+{"at":"2026-11-04T10:38:59.383Z","setup":"haiku-repo","task":"n8n-26550","cost_usd":0.009809050000000001}
+{"at":"2026-11-04T10:39:28.669Z","setup":"opus-repo","task":"n8n-26550","cost_usd":0.17465340000000001}
+{"at":"2026-11-04T10:40:54.554Z","setup":"sonnet-repo","task":"n8n-27371","cost_usd":0.2468794}
+{"at":"2026-11-04T10:41:14.178Z","setup":"sonnet-bare","task":"n8n-27371","cost_usd":0.18606710000000004}
+{"at":"2026-11-04T10:45:18.750Z","setup":"opus-repo","task":"n8n-27371","cost_usd":0.6364798}
+{"at":"2026-11-04T10:46:30.385Z","setup":"sonnet-repo","task":"n8n-25040","cost_usd":0.09673209999999999}
+{"at":"2026-11-04T10:47:29.999Z","setup":"sonnet-bare","task":"n8n-25040","cost_usd":0.0890395}
+{"at":"2026-11-04T10:47:51.625Z","setup":"haiku-repo","task":"n8n-27371","cost_usd":0.0613395}
+{"at":"2026-11-04T10:48:42.427Z","setup":"haiku-repo","task":"n8n-25040","cost_usd":0.011323620000000001}
+{"at":"2026-11-04T10:50:00.473Z","setup":"opus-repo","task":"n8n-25040","cost_usd":0.6066036}
+{"at":"2026-11-04T10:50:19.901Z","setup":"sonnet-repo","task":"n8n-24717","cost_usd":0.11412610000000001}
+{"at":"2026-11-04T10:51:28.137Z","setup":"sonnet-bare","task":"n8n-24717","cost_usd":0.11603740000000001}
+{"at":"2026-11-04T10:52:28.071Z","setup":"haiku-repo","task":"n8n-24717","cost_usd":0.01720923}
+{"at":"2026-11-04T10:53:22.808Z","setup":"opus-repo","task":"n8n-24717","cost_usd":0.3830466}
+{"at":"2026-11-04T10:53:44.618Z","setup":"sonnet-repo","task":"n8n-22937","cost_usd":0.0639924}
+{"at":"2026-11-04T10:54:42.874Z","setup":"sonnet-bare","task":"n8n-22937","cost_usd":0.079236}
+{"at":"2026-11-04T10:55:04.012Z","setup":"haiku-repo","task":"n8n-22937","cost_usd":0.008169580000000001}
+{"at":"2026-11-04T10:56:03.248Z","setup":"opus-repo","task":"n8n-22937","cost_usd":0.20358420000000002}
+{"at":"2026-11-04T10:56:22.792Z","setup":"sonnet-repo","task":"n8n-22711","cost_usd":0.1025444}
+{"at":"2026-11-04T10:57:33.633Z","setup":"sonnet-bare","task":"n8n-22711","cost_usd":0.1387241}
+{"at":"2026-11-04T10:58:15.730Z","setup":"haiku-repo","task":"n8n-22711","cost_usd":0.01395134}
+{"at":"2026-11-04T10:58:47.194Z","setup":"opus-repo","task":"n8n-22711","cost_usd":0.22036619999999998}
+{"at":"2026-11-04T10:59:17.020Z","setup":"sonnet-repo","task":"n8n-21534","cost_usd":0.0724856}
+{"at":"2026-11-04T10:59:48.545Z","setup":"sonnet-bare","task":"n8n-21534","cost_usd":0.06986300000000001}
+{"at":"2026-11-04T11:00:42.697Z","setup":"haiku-repo","task":"n8n-21534","cost_usd":0.01012983}
+{"at":"2026-11-04T11:01:02.369Z","setup":"opus-repo","task":"n8n-21534","cost_usd":0.12914219999999998}

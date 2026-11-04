@@ -1,0 +1,82 @@
+{
+ "task": "n8n-22937",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed the bug and added a regression test. The `utils.test.ts` suite passes (111/111), but lint and typecheck did not give a clean result (details below).\n\n**Cause:** `syntaxNodeToValue` in `packages/workflow/src/utils.ts` handles object, identifier, literal and array nodes. A negative number such as `-1` parses as a `UnaryExpression`, which hit the `default` branch and returned `undefined`. So `tryToParseObject` (and other `acceptJSObject` callers) turned `\"{a: -1}\"` into `{a: undefined}`.\n\n**Change:**\n- `packages/workflow/src/utils.ts`: added a `Syntax.UnaryExpression` case that applies unary `-` (and `+`) to a numeric literal and returns `undefined` for anything else, so behavior for other expressions is unchanged.\n- `packages/workflow/test/utils.test.ts`: added a test that `jsonParse(\"{a: -1, 'b': -2.5}\", { acceptJSObject: true })` gives `{ a: -1, b: -2.5 }`, and that `{a: +3}` gives `{ a: 3 }`.\n\n**Verification:**\n- `acdc-test test/utils.test.ts`: 1 file, 111 tests passed.\n- `acdc-typecheck`: ran once as part of a combined command. Its output was empty, but I did not capture its exit code, so I can't confirm it passed.\n- `acdc-lint src/utils.ts test/utils.test.ts`: failed with `Failed to find tsgolint executable. You may need to add the oxlint-tsgolint package`. This is an environment problem, not a lint result for my change. I did not get a lint verdict.\n- I tried to rerun typecheck and lint with exit codes captured, but the Bash call was denied by the permission mode, so I did not retry it.\n\n**For reviewers:**\n- The `-`/`+` case only handles a number literal as the operand. Something like `-(1)` also parses as a unary over a literal, so it is covered, but `-x` for an identifier still returns `undefined`, as before.\n- Typecheck and lint still need a clean run in an environment with `oxlint-tsgolint` installed.\n\n{\"summary\": \"Fixed negative numbers being dropped when parsing object strings. syntaxNodeToValue in packages/workflow/src/utils.ts had no case for UnaryExpression, so '-1' became undefined in jsonParse's acceptJSObject fallback (used by tryToParseObject). Added a UnaryExpression case handling unary '-' and '+' on numeric literals, and a regression test in test/utils.test.ts.\", \"verification\": \"acdc-test test/utils.test.ts: 111/111 passed. acdc-typecheck: output empty in a combined run, exit code not captured. acdc-lint on the two changed files: failed with 'Failed to find tsgolint executable' (environment issue, no lint verdict). A rerun with exit codes was denied by the permission mode.\", \"tests_pass\": true, \"risks\": [\"Typecheck and lint are not confirmed clean; rerun acdc-typecheck and acdc-lint where oxlint-tsgolint is installed.\", \"Only unary +/- applied directly to a numeric literal is handled; other unary expressions still return undefined as before.\", \"The change affects every jsonParse call with acceptJSObject, including tryToParseObject and the form-fields parser, so a reviewer should confirm no caller relied on negative numbers being dropped.\"]}",
+  "cost_usd": 0.008169580000000001,
+  "turns": 14,
+  "tool_calls": 13,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 229664,
+  "tokens_out": 5578,
+  "model": "claude-haiku-5-5",
+  "seconds": 58
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 3,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 208,
+   "total": 208
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/utils.ts",
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "lines_changed": 16,
+  "reference_lines": 7,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.15049075419653166,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/utils.ts b/packages/workflow/src/utils.ts\nindex 5890db241..088fa337a 100644\n--- a/packages/workflow/src/utils.ts\n+++ b/packages/workflow/src/utils.ts\n@@ -85,7 +85,16 @@ function syntaxNodeToValue(expression?: SyntaxNode | null): unknown {\n \t\t\treturn expression.name;\n \t\tcase Syntax.Literal:\n \t\t\treturn expression.value;\n-\t\tcase Syntax.ArrayExpression:\n+\t\tcase Syntax.UnaryExpression: {\n+\t\t\t\t// Negative numbers (e.g. `-1`) are parsed as a unary `-` applied to a literal\n+\t\t\t\tconst argument = syntaxNodeToValue(expression.argument);\n+\t\t\t\tif (typeof argument === 'number') {\n+\t\t\t\t\tif (expression.operator === '-') return -argument;\n+\t\t\t\t\tif (expression.operator === '+') return argument;\n+\t\t\t\t}\n+\t\t\t\treturn undefined;\n+\t\t\t}\n+\t\t\tcase Syntax.ArrayExpression:\n \t\t\treturn expression.elements.map((exp) => syntaxNodeToValue(exp));\n \t\tdefault:\n \t\t\treturn undefined;\ndiff --git a/packages/workflow/test/utils.test.ts b/packages/workflow/test/utils.test.ts\nindex 778d0d03f..b9538ac32 100644\n--- a/packages/workflow/test/utils.test.ts\n+++ b/packages/workflow/test/utils.test.ts\n@@ -110,6 +110,11 @@ describe('jsonParse', () => {\n \t\texpect(jsonParse('', { fallbackValue: { foo: 'bar' } })).toEqual({ foo: 'bar' });\n \t});\n \n+\tit('parses negative numbers in JS object strings with acceptJSObject', () => {\n+\t\texpect(jsonParse(\"{a: -1, 'b': -2.5}\", { acceptJSObject: true })).toEqual({ a: -1, b: -2.5 });\n+\t\texpect(jsonParse('{a: +3}', { acceptJSObject: true })).toEqual({ a: 3 });\n+\t});\n+\n \tdescribe('JSON repair', () => {\n \t\tdescribe('Recovery edge cases', () => {\n \t\t\tit('should handle simple object with single quotes', () => {\n"
+ },
+ "evidence": "## fix: Allow negative numbers when parsing objects from string\n\nFixed negative numbers being dropped when parsing object strings. syntaxNodeToValue in packages/workflow/src/utils.ts had no case for UnaryExpression, so '-1' became undefined in jsonParse's acceptJSObject fallback (used by tryToParseObject). Added a UnaryExpression case handling unary '-' and '+' on numeric literals, and a regression test in test/utils.test.ts.\n\n### What changed\n- 1 source file(s), 1 test file(s), 16 changed lines\n- `packages/workflow/src/utils.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/utils.test.ts: 111/111 passed. acdc-typecheck: output empty in a combined run, exit code not captured. acdc-lint on the two changed files: failed with 'Failed to find tsgolint executable' (environment issue, no lint verdict). A rerun with exit codes was denied by the permission mode.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 3/3; tests that passed before: 208/208\n\n### Risks that remain\n- Change risk: medium (15% chance of a revert or follow-up fix, from n8n's history)\n- Typecheck and lint are not confirmed clean; rerun acdc-typecheck and acdc-lint where oxlint-tsgolint is installed.\n- Only unary +/- applied directly to a numeric literal is handled; other unary expressions still return undefined as before.\n- The change affects every jsonParse call with acceptJSObject, including tryToParseObject and the form-fields parser, so a reviewer should confirm no caller relied on negative numbers being dropped.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The new UnaryExpression case negates numeric literals (and accepts unary +), so values like `-1` now parse correctly, and no hidden tests fail. It returns undefined for non-numeric or other unary cases where the merged fix returns the value, which is arguably safer. The only flaw is the inconsistent indentation around `case Syntax.ArrayExpression`, which the formatter would fix.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.011552699999999999
+ }
+}

@@ -1,0 +1,82 @@
+{
+ "task": "n8n-29689",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Unknown keys in a multi-value `fixedCollection` are now skipped instead of throwing. Tests pass and the typecheck is clean, but the linter wouldn't run in this environment.\n\n**Cause:** In `getNodeParameters` (`packages/workflow/src/node-helpers.ts`), the branch for `fixedCollection`s with `multipleValues: true` threw `ApplicationError('Could not find property option')` when a saved key didn't match any defined option. That happens when a workflow holds old data from an earlier node version. The single-value branch a few lines further down already ignores such keys.\n\n**Fix:** The option lookup now runs once per key, before looping over its items. If nothing matches, it `continue`s, so the unknown key is dropped from the output, the same as the single-value branch. Known keys next to it are still processed as before. `ApplicationError` is still used elsewhere in the file, so the import stays.\n\n**Tests:** I added two cases to the `getNodeParameters` table in `test/node-helpers.test.ts`. Each runs with all four combinations of `returnDefaults` and `returnNoneDisplayed`:\n- only an unknown key: the result is `{}`, or `{ values: {} }` when defaults are returned;\n- an unknown key plus a known one: the known one comes back intact and the unknown one is dropped.\n\nI didn't run the new tests against the old code to watch them fail. Under the old code, the `unknownOption` input goes straight into the `throw`.\n\n**Verification:**\n- `acdc-test test/node-helpers.test.ts`: 179 of 179 passed (177 before plus the 2 new).\n- `acdc-typecheck`: no errors.\n- `acdc-lint src/node-helpers.ts test/node-helpers.test.ts`: didn't run, because the `tsgolint` executable is missing. Lint is unchecked.\n\n{\"summary\": \"In getNodeParameters (packages/workflow/src/node-helpers.ts), the multipleValues:true fixedCollection branch threw ApplicationError('Could not find property option') when a stored key had no matching option, e.g. stale data from an older node version. It now looks up the option once per key and skips keys with no match, the same as the single-value branch already does. Added two getNodeParameters test cases: only an unknown key, and an unknown key next to a known one.\", \"verification\": \"acdc-test test/node-helpers.test.ts: 179/179 passed, including the 2 new cases. acdc-typecheck: no errors. acdc-lint did not run because the tsgolint executable is missing, so lint is unchecked. The new tests were not run against the old code to confirm they fail.\", \"tests_pass\": true, \"risks\": [\"Unknown multi-value keys are now silently dropped from the resolved parameters instead of raising an error, so bad data will no longer show up as an error; check that no caller relied on the throw\", \"Lint was not checked because acdc-lint could not find tsgolint\", \"Only the unknown-key case is handled; a known key whose value is not an array would still fail in the for-of loop\"]}",
+  "cost_usd": 0.38134799999999996,
+  "turns": 21,
+  "tool_calls": 20,
+  "tests_run": 4,
+  "denials": 1,
+  "tokens_in": 280086,
+  "tokens_out": 8088,
+  "model": "claude-opus-5-5",
+  "seconds": 144
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 318,
+   "total": 318
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 134,
+  "reference_lines": 19,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12987441102537045,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex d7ae0b95a..b85d417f0 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -929,20 +929,21 @@ export function getNodeParameters(\n \t\t\t\t\tif (typeof propertyValues !== 'object' || Array.isArray(propertyValues)) {\n \t\t\t\t\t\tcontinue;\n \t\t\t\t\t}\n+\n+\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n+\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n+\t\t\t\t\t) as INodePropertyCollection | undefined;\n+\n+\t\t\t\t\t// Skip keys that do not match any option (e.g. stale data from an older\n+\t\t\t\t\t// node version), same as the single-value branch below does\n+\t\t\t\t\tif (nodePropertyOptions === undefined) {\n+\t\t\t\t\t\tcontinue;\n+\t\t\t\t\t}\n+\n \t\t\t\t\t// Iterate over all items as it contains multiple ones\n \t\t\t\t\tfor (const nodeValue of (propertyValues as INodeParameters)[\n \t\t\t\t\t\titemName\n \t\t\t\t\t] as INodeParameters[]) {\n-\t\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n-\t\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n-\t\t\t\t\t\t) as INodePropertyCollection;\n-\n-\t\t\t\t\t\tif (nodePropertyOptions === undefined) {\n-\t\t\t\t\t\t\tthrow new ApplicationError('Could not find property option', {\n-\t\t\t\t\t\t\t\textra: { propertyOption: itemName, property: nodeProperties.name },\n-\t\t\t\t\t\t\t});\n-\t\t\t\t\t\t}\n-\n \t\t\t\t\t\ttempNodePropertiesArray = nodePropertyOptions.values!;\n \t\t\t\t\t\ttempValue = getNodeParameters(\n \t\t\t\t\t\t\ttempNodePropertiesArray,\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex 2da320a95..7dadcbd12 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -3615,6 +3615,119 @@ describe('NodeHelpers', () => {\n \t\t\t\t\t},\n \t\t\t\t},\n \t\t\t},\n+\t\t\t{\n+\t\t\t\tdescription:\n+\t\t\t\t\t'fixedCollection with multipleValues: true - skip keys that do not match any option',\n+\t\t\t\tinput: {\n+\t\t\t\t\tnodePropertiesArray: [\n+\t\t\t\t\t\t{\n+\t\t\t\t\t\t\tdisplayName: 'Values',\n+\t\t\t\t\t\t\tname: 'values',\n+\t\t\t\t\t\t\ttype: 'fixedCollection',\n+\t\t\t\t\t\t\ttypeOptions: {\n+\t\t\t\t\t\t\t\tmultipleValues: true,\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\tdefault: {},\n+\t\t\t\t\t\t\toptions: [\n+\t\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\t\tname: 'option1',\n+\t\t\t\t\t\t\t\t\tdisplayName: 'Option 1',\n+\t\t\t\t\t\t\t\t\tvalues: [\n+\t\t\t\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\t\t\t\tdisplayName: 'String',\n+\t\t\t\t\t\t\t\t\t\t\tname: 'string1',\n+\t\t\t\t\t\t\t\t\t\t\ttype: 'string',\n+\t\t\t\t\t\t\t\t\t\t\tdefault: 'default string',\n+\t\t\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t],\n+\t\t\t\t\tnodeValues: {\n+\t\t\t\t\t\tvalues: {\n+\t\t\t\t\t\t\tunknownOption: [{ string1: 'stale value' }],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t},\n+\t\t\t\toutput: {\n+\t\t\t\t\tnoneDisplayedFalse: {\n+\t\t\t\t\t\tdefaultsFalse: {},\n+\t\t\t\t\t\tdefaultsTrue: {\n+\t\t\t\t\t\t\tvalues: {},\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t\tnoneDisplayedTrue: {\n+\t\t\t\t\t\tdefaultsFalse: {},\n+\t\t\t\t\t\tdefaultsTrue: {\n+\t\t\t\t\t\t\tvalues: {},\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t},\n+\t\t\t},\n+\t\t\t{\n+\t\t\t\tdescription:\n+\t\t\t\t\t'fixedCollection with multipleValues: true - keep known options when unknown keys are also present',\n+\t\t\t\tinput: {\n+\t\t\t\t\tnodePropertiesArray: [\n+\t\t\t\t\t\t{\n+\t\t\t\t\t\t\tdisplayName: 'Values',\n+\t\t\t\t\t\t\tname: 'values',\n+\t\t\t\t\t\t\ttype: 'fixedCollection',\n+\t\t\t\t\t\t\ttypeOptions: {\n+\t\t\t\t\t\t\t\tmultipleValues: true,\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\tdefault: {},\n+\t\t\t\t\t\t\toptions: [\n+\t\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\t\tname: 'option1',\n+\t\t\t\t\t\t\t\t\tdisplayName: 'Option 1',\n+\t\t\t\t\t\t\t\t\tvalues: [\n+\t\t\t\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\t\t\t\tdisplayName: 'String',\n+\t\t\t\t\t\t\t\t\t\t\tname: 'string1',\n+\t\t\t\t\t\t\t\t\t\t\ttype: 'string',\n+\t\t\t\t\t\t\t\t\t\t\tdefault: 'default string',\n+\t\t\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t],\n+\t\t\t\t\tnodeValues: {\n+\t\t\t\t\t\tvalues: {\n+\t\t\t\t\t\t\tunknownOption: [{ string1: 'stale value' }],\n+\t\t\t\t\t\t\toption1: [{ string1: 'value1' }],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t},\n+\t\t\t\toutput: {\n+\t\t\t\t\tnoneDisplayedFalse: {\n+\t\t\t\t\t\tdefaultsFalse: {\n+\t\t\t\t\t\t\tvalues: {\n+\t\t\t\t\t\t\t\toption1: [{ string1: 'value1' }],\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t},\n+\t\t\t\t\t\tdefaultsTrue: {\n+\t\t\t\t\t\t\tvalues: {\n+\t\t\t\t\t\t\t\toption1: [{ string1: 'value1' }],\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t\tnoneDisplayedTrue: {\n+\t\t\t\t\t\tdefaultsFalse: {\n+\t\t\t\t\t\t\tvalues: {\n+\t\t\t\t\t\t\t\toption1: [{ string1: 'value1' }],\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t},\n+\t\t\t\t\t\tdefaultsTrue: {\n+\t\t\t\t\t\t\tvalues: {\n+\t\t\t\t\t\t\t\toption1: [{ string1: 'value1' }],\n+\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t},\n+\t\t\t},\n \t\t];\n \n \t\tfor (const testData of tests) {\n"
+ },
+ "evidence": "## fix(core): Skip unknown fixedCollection keys instead of throwing\n\nIn getNodeParameters (packages/workflow/src/node-helpers.ts), the multipleValues:true fixedCollection branch threw ApplicationError('Could not find property option') when a stored key had no matching option, e.g. stale data from an older node version. It now looks up the option once per key and skips keys with no match, the same as the single-value branch already does. Added two getNodeParameters test cases: only an unknown key, and an unknown key next to a known one.\n\n### What changed\n- 1 source file(s), 1 test file(s), 134 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 4 time(s) and says: acdc-test test/node-helpers.test.ts: 179/179 passed, including the 2 new cases. acdc-typecheck: no errors. acdc-lint did not run because the tsgolint executable is missing, so lint is unchecked. The new tests were not run against the old code to confirm they fail.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 318/318\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- Unknown multi-value keys are now silently dropped from the resolved parameters instead of raising an error, so bad data will no longer show up as an error; check that no caller relied on the throw\n- Lint was not checked because acdc-lint could not find tsgolint\n- Only the unknown-key case is handled; a known key whose value is not an array would still fail in the for-of loop\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.38\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change is functionally identical to the merged fix: it hoists the option lookup out of the inner loop and continues on an undefined match instead of throwing. The added `| undefined` cast and comment are harmless, and no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0098127
+ }
+}

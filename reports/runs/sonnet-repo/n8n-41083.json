@@ -1,0 +1,84 @@
+{
+ "task": "n8n-41083",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Native evaluation now hands off to the engine when `first()`, `last()` or `all()` on a node reference returns something that isn't an item. That means anything other than an object with `json`, or an array of such objects. The affected test files pass, lint reports 0 warnings and 0 errors, and typecheck printed nothing, which I took as clean.\n\n- **Cause:** `evalNodeRefCall` in `packages/workflow/src/expressions/native-evaluation/evaluator.ts` returned whatever the host function gave it. A non-item result, such as `[1, 2]`, a string or `undefined`, was evaluated natively instead of by the engine.\n- **Fix:** I added an item-shape check there. Anything that fails it throws `EngineFallbackError`.\n- **Tests:** I added a parity test covering a number array, a string, `undefined`, and a valid `[{ json: {} }]` that stays native. The existing charge-per-item test returned `[0, 0, ...]` from `all()`, so I changed it to return `{ json: {} }` items.\n\n{\"summary\": \"In native expression evaluation, first()/last()/all() on a node reference now fall back to the engine (EngineFallbackError) unless the result is an item ({json}) or an array of items. Added a parity test and updated an existing test's mock to return item-shaped values.\", \"verification\": \"acdc-test on native-evaluation parity, corpus-coverage and fuzz tests (5 files, 923 tests) passed. acdc-lint on the two changed files reported 0 warnings and 0 errors. acdc-typecheck printed nothing, which I took as clean.\", \"tests_pass\": true, \"risks\": [\"The check requires a `json` key, so a single item or array element without `json` now goes to the engine. That is slower but correct.\", \"An empty `first()` or `last()` result (undefined) now falls back to the engine instead of being handled natively. Confirm that is intended.\", \"Arrays are checked with `every`, which adds an O(n) pass bounded by MAX_RESULT_LENGTH.\"]}",
+  "cost_usd": 0.1552114,
+  "turns": 15,
+  "tool_calls": 14,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 178214,
+  "tokens_out": 3947,
+  "model": "claude-sonnet-5-5",
+  "seconds": 108
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 458,
+   "total": 459
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards a node reference call that returns no item shape hands off to the engine",
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards node reference calls in a callback body are charged per item"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 25,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.16727445667743113,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 80dde1648..720f405b4 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -508,6 +508,14 @@ function evalNodeRefCall(proxy: unknown, method: string, env: Env): unknown {\n \tif (typeof fn !== 'function') throw new EngineFallbackError();\n \n \tconst result = bounded(fn.call(proxy));\n+\n+\t// Anything that is not an item (or an array of items) is the engine's to resolve.\n+\tconst isItem = (value: unknown) =>\n+\t\ttypeof value === 'object' && value !== null && 'json' in value;\n+\tif (!(isArray(result) ? result.every(isItem) : isItem(result))) {\n+\t\tthrow new EngineFallbackError();\n+\t}\n+\n \tenv.charge(isArray(result) ? result.length : 1);\n \n \treturn result;\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex cd3353bf9..377b831f3 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -717,10 +717,25 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\texpect(nativeOn('{{ $json.list.last() }}', { $json })).toEqual({ handled: true, value: 'a' });\n \t\t});\n \n+\t\ttest('node reference results without an item shape hand off to the engine', () => {\n+\t\t\texpect(nativeOn('{{ $input.all().length }}', { $input: { all: () => [1, 2] } })).toEqual({\n+\t\t\t\thandled: false,\n+\t\t\t});\n+\t\t\texpect(nativeOn('{{ $input.first() }}', { $input: { first: () => 'x' } })).toEqual({\n+\t\t\t\thandled: false,\n+\t\t\t});\n+\t\t\texpect(nativeOn('{{ $input.first() }}', { $input: { first: () => undefined } })).toEqual({\n+\t\t\t\thandled: false,\n+\t\t\t});\n+\t\t\texpect(\n+\t\t\t\tnativeOn('{{ $input.all().length }}', { $input: { all: () => [{ json: {} }] } }),\n+\t\t\t).toEqual({ handled: true, value: 1 });\n+\t\t});\n+\n \t\t// In combined binary mode the host copies every item per all() call, so a\n \t\t// body calling it per visit is charged for the items each call returns.\n \t\ttest('node reference calls in a callback body are charged per item', () => {\n-\t\t\tconst items = new Array<number>(MAX_RESULT_LENGTH).fill(0);\n+\t\t\tconst items = new Array(MAX_RESULT_LENGTH).fill({ json: {} }) as unknown[];\n \t\t\tconst $input = { all: () => items };\n \t\t\tconst visits = (count: number) => ({\n \t\t\t\t$json: { list: new Array<number>(count).fill(0) },\n"
+ },
+ "evidence": "## fix(core): Hand node reference results without an item shape to the engine (no-changelog)\n\nIn native expression evaluation, first()/last()/all() on a node reference now fall back to the engine (EngineFallbackError) unless the result is an item ({json}) or an array of items. Added a parity test and updated an existing test's mock to return item-shaped values.\n\n### What changed\n- 1 source file(s), 1 test file(s), 25 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on native-evaluation parity, corpus-coverage and fuzz tests (5 files, 923 tests) passed. acdc-lint on the two changed files reported 0 warnings and 0 errors. acdc-typecheck printed nothing, which I took as clean.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 458/459\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (17% chance of a revert or follow-up fix, from n8n's history)\n- The check requires a `json` key, so a single item or array element without `json` now goes to the engine. That is slower but correct.\n- An empty `first()` or `last()` result (undefined) now falls back to the engine instead of being handled natively. Confirm that is intended.\n- Arrays are checked with `every`, which adds an O(n) pass bounded by MAX_RESULT_LENGTH.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.16\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change requires every item to have a 'json' key, which differs from the intended 'object, non-array' item-shape check. It also treats an undefined result as a fallback, whereas the merged fix lets undefined stay native, and it changes how results are charged. That is why the 'no item shape' and per-item charging tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0093607
+ }
+}

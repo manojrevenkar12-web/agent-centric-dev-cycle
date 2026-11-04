@@ -1,0 +1,84 @@
+{
+ "task": "n8n-41083",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The native expression evaluator now hands node-reference results to the engine when they aren't shaped like items. The tests, typecheck and lint pass, but I couldn't show the actual divergence from the engine this guards against. Legacy and quickjs already return the same results either way, and the `vm` engine, which is where I'd expect the difference, doesn't run in this environment.\n\n**Cause.** The native evaluator assumed that `$('X').item`, `$input.item`, `first()`, `last()` and `all()` always return items (`{ json, ... }`) or, for `all()`, a list of them. It never checked. The data proxy can return other things:\n- In `combined` binary mode it returns the item's `json` in place of the item (`returnExecutionData` in `src/workflow-data-proxy.ts:139`).\n- `first()` and `last()` return `undefined` when there are no items.\n\nThese values went straight into native member reads instead of being left to the engine.\n\n**Change** (in `src/expressions/native-evaluation/evaluator.ts`):\n- I added an `isItem` check: the value is a plain object with its own `json` property, and that property is a plain object too.\n- `evalNodeRefCall` now requires `first()`/`last()` to return an item and `all()` to return an array of items. Otherwise it hands the expression to the engine.\n- `evalMember` applies the same check to `.item` on `$(...)` and `$input`. Legacy `$node[...]` reads are not checked, because their `.json`/`.binary` are the item's own fields, not items.\n- An empty `all()` result (`[]`) is still evaluated natively.\n\n**Tests** (in `test/native-evaluation-parity.test.ts`):\n- A new unit test covers both outcomes. Item-shaped results are evaluated natively. Non-items, `undefined`, and mixed `all()` arrays go to the engine.\n- New parity cases run against a workflow set to `binaryMode: 'combined'` and check that native evaluation and the engine return the same result.\n- I updated the existing per-item charging test: its `$input.all()` stub returned numbers, so it now returns `{ json: {} }` items.\n\n**Verification:**\n- The parity, fuzz, corpus-coverage, data-proxy and expression test files all pass on the legacy and quickjs engines (9 files). Every expression in the handled corpus is still evaluated natively.\n- With the check turned off, only the new unit test fails. The combined-mode parity cases pass either way on these two engines, so they guard against regressions but don't reproduce a bug here.\n- `acdc-typecheck` printed no errors (I couldn't read its exit code) and `acdc-lint` is clean.\n\n{\"summary\": \"Native expression evaluation assumed node reference results (`.item`, `first()`, `last()`, `all()` on `$()`/`$input`) are always items, but the data proxy can return the item's json in place of the item (combined binary mode) or undefined (no items). Added an `isItem` check (own plain-object `json`) in evaluator.ts: evalNodeRefCall checks first/last results and every all() element, and evalMember checks `.item` on non-legacy node refs, falling back to the engine (EngineFallbackError) otherwise. Updated the existing all()-charging test to use item-shaped stubs; added a unit test for the fallback and combined-binary-mode parity cases.\", \"verification\": \"acdc-test on native-evaluation-parity, native-evaluation-fuzz, native-evaluation-corpus-coverage, workflow-data-proxy and expression tests: 9 files passed (legacy and quickjs projects; the vm project did not run here). With the check turned off, only the new unit test fails; the combined-mode parity cases pass either way on legacy/quickjs. acdc-typecheck printed no errors (exit code not observed); acdc-lint on both changed files: 0 warnings, 0 errors.\", \"tests_pass\": true, \"risks\": [\"Not reproduced: no engine run here diverged from native for non-item results (legacy/quickjs pass either way); the motivating divergence is presumably in the vm bridge, whose source and test project were not available here\", \"In combined binary mode, a json that happens to have an own object-valued `json` key still passes as item-shaped and stays native\", \"first()/last() returning undefined now goes to the engine instead of being evaluated natively — slower, but the result should be the same\", \"all() now runs an O(n) shape check over at most MAX_RESULT_LENGTH elements on each call, including inside callback bodies\"]}",
+  "cost_usd": 1.0314363999999998,
+  "turns": 43,
+  "tool_calls": 42,
+  "tests_run": 4,
+  "denials": 2,
+  "tokens_in": 1372749,
+  "tokens_out": 12630,
+  "model": "claude-opus-5-5",
+  "seconds": 292
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 458,
+   "total": 459
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards a node reference call that returns no item shape hands off to the engine",
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards node reference calls in a callback body are charged per item"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 116,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.16727445667743113,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 80dde1648..b82cca79f 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -163,6 +163,10 @@ function evalMember(node: Extract<SimpleNode, { kind: 'member' }>, env: Env): un\n \t\tthrow new EngineFallbackError();\n \t}\n \n+\t// `.item` on `$(...)`/`$input`; the legacy `$node[...]` members are the\n+\t// item's own `json`/`binary`, not an item.\n+\tif (node.object.kind === 'nodeRef' && node.object.ref !== 'legacy') return assertItem(value);\n+\n \treturn value;\n }\n \n@@ -510,7 +514,32 @@ function evalNodeRefCall(proxy: unknown, method: string, env: Env): unknown {\n \tconst result = bounded(fn.call(proxy));\n \tenv.charge(isArray(result) ? result.length : 1);\n \n-\treturn result;\n+\treturn method === 'all' ? assertItems(result) : assertItem(result);\n+}\n+\n+/**\n+ * A node reference yields an item (`{ json, ... }`) or, from `all()`, an\n+ * array of them. Anything else (no item at all, or combined binary mode,\n+ * where the proxy hands back the item's `json` in its place) is not what\n+ * parsing assumed, so the engine decides what it yields.\n+ */\n+const isItem = (value: unknown): boolean =>\n+\tisObj(value) &&\n+\t!isArray(value) &&\n+\thasOwn(value, 'json') &&\n+\tisObj(value.json) &&\n+\t!isArray(value.json);\n+\n+function assertItem(value: unknown): unknown {\n+\tif (!isItem(value)) throw new EngineFallbackError();\n+\n+\treturn value;\n+}\n+\n+function assertItems(value: unknown): unknown {\n+\tif (!isArray(value) || !value.every(isItem)) throw new EngineFallbackError();\n+\n+\treturn value;\n }\n \n /**\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex cd3353bf9..c6b6f7cc7 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -720,7 +720,7 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t// In combined binary mode the host copies every item per all() call, so a\n \t\t// body calling it per visit is charged for the items each call returns.\n \t\ttest('node reference calls in a callback body are charged per item', () => {\n-\t\t\tconst items = new Array<number>(MAX_RESULT_LENGTH).fill(0);\n+\t\t\tconst items = new Array<{ json: object }>(MAX_RESULT_LENGTH).fill({ json: {} });\n \t\t\tconst $input = { all: () => items };\n \t\t\tconst visits = (count: number) => ({\n \t\t\t\t$json: { list: new Array<number>(count).fill(0) },\n@@ -731,6 +731,89 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\texpect(nativeOn(expr, visits(fits + 2))).toEqual({ handled: false });\n \t\t\texpect(nativeOn(expr, visits(fits))).toEqual({ handled: true, value: false });\n \t\t});\n+\n+\t\ttest('node reference results without an item shape hand off to the engine', () => {\n+\t\t\tconst item = { json: { a: 1 } };\n+\t\t\tconst $input = {\n+\t\t\t\titem,\n+\t\t\t\tfirst: () => item,\n+\t\t\t\tlast: () => undefined,\n+\t\t\t\tall: () => [item, { a: 2 }],\n+\t\t\t};\n+\t\t\texpect(nativeOn('{{ $input.item.json.a }}', { $input })).toEqual({ handled: true, value: 1 });\n+\t\t\texpect(nativeOn('{{ $input.first().json.a }}', { $input })).toEqual({\n+\t\t\t\thandled: true,\n+\t\t\t\tvalue: 1,\n+\t\t\t});\n+\t\t\texpect(nativeOn('{{ $input.item.json.a }}', { $input: { item: { a: 1 } } })).toEqual({\n+\t\t\t\thandled: false,\n+\t\t\t});\n+\t\t\texpect(nativeOn('{{ $input.first().json.a }}', { $input: { first: () => ({ a: 1 }) } })).toEqual(\n+\t\t\t\t{ handled: false },\n+\t\t\t);\n+\t\t\texpect(nativeOn('{{ $input.last()?.json }}', { $input })).toEqual({ handled: false });\n+\t\t\texpect(nativeOn('{{ $input.all().length }}', { $input })).toEqual({ handled: false });\n+\t\t\texpect(nativeOn('{{ $input.all().length }}', { $input: { all: () => [] } })).toEqual({\n+\t\t\t\thandled: true,\n+\t\t\t\tvalue: 0,\n+\t\t\t});\n+\t\t});\n+\t});\n+\n+\t// In combined binary mode the data proxy hands back each item's `json` in\n+\t// place of the item, so node references are not item-shaped there.\n+\tdescribe('node references in combined binary mode match the engine', () => {\n+\t\tconst combined = new Workflow({\n+\t\t\tid: '2',\n+\t\t\tnodes: Object.values(workflow.nodes),\n+\t\t\tconnections: workflow.connectionsBySourceNode,\n+\t\t\tactive: false,\n+\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\tsettings: { binaryMode: 'combined' },\n+\t\t});\n+\t\tconst combinedItem = makeItem(false);\n+\t\tconst combinedData = runDataFor([combinedItem]);\n+\n+\t\tbeforeAll(async () => {\n+\t\t\tawait combined.expression.acquireIsolate();\n+\t\t});\n+\t\tafterAll(async () => {\n+\t\t\tawait combined.expression.releaseIsolate();\n+\t\t});\n+\n+\t\tconst run = (expr: string, native: boolean) => {\n+\t\t\tExpression.setNativeEvaluation(native);\n+\t\t\ttry {\n+\t\t\t\treturn combined.expression.getParameterValue(\n+\t\t\t\t\texpr,\n+\t\t\t\t\tcombinedData,\n+\t\t\t\t\t0,\n+\t\t\t\t\t0,\n+\t\t\t\t\t'Current',\n+\t\t\t\t\t[combinedItem],\n+\t\t\t\t\t'manual',\n+\t\t\t\t\tadditionalKeys,\n+\t\t\t\t\t{\n+\t\t\t\t\t\tnode: combined.getNode('Current')!,\n+\t\t\t\t\t\tdata: { main: [[combinedItem]] },\n+\t\t\t\t\t\tsource: { main: [{ previousNode: 'Source' }] },\n+\t\t\t\t\t},\n+\t\t\t\t);\n+\t\t\t} finally {\n+\t\t\t\tExpression.setNativeEvaluation(false);\n+\t\t\t}\n+\t\t};\n+\n+\t\ttest.each([\n+\t\t\t\"={{ $('Source').item.item.name }}\",\n+\t\t\t\"={{ $('Source').first().item.name }}\",\n+\t\t\t\"={{ $('Source').last().item.names }}\",\n+\t\t\t\"={{ $('Source').all().length }}\",\n+\t\t\t'={{ $input.item.item.count }}',\n+\t\t\t'={{ $input.first().json }}',\n+\t\t])('%s', (expr) => {\n+\t\t\texpect(run(expr, true)).toStrictEqual(run(expr, false));\n+\t\t});\n \t});\n \n \t// extendSyntax rewrites calls to extension-named methods into extend()\n"
+ },
+ "evidence": "## fix(core): Hand node reference results without an item shape to the engine (no-changelog)\n\nNative expression evaluation assumed node reference results (`.item`, `first()`, `last()`, `all()` on `$()`/`$input`) are always items, but the data proxy can return the item's json in place of the item (combined binary mode) or undefined (no items). Added an `isItem` check (own plain-object `json`) in evaluator.ts: evalNodeRefCall checks first/last results and every all() element, and evalMember checks `.item` on non-legacy node refs, falling back to the engine (EngineFallbackError) otherwise. Updated the existing all()-charging test to use item-shaped stubs; added a unit test for the fallback and combined-binary-mode parity cases.\n\n### What changed\n- 1 source file(s), 1 test file(s), 116 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 4 time(s) and says: acdc-test on native-evaluation-parity, native-evaluation-fuzz, native-evaluation-corpus-coverage, workflow-data-proxy and expression tests: 9 files passed (legacy and quickjs projects; the vm project did not run here). With the check turned off, only the new unit test fails; the combined-mode parity cases pass either way on legacy/quickjs. acdc-typecheck printed no errors (exit code not observed); acdc-lint on both changed files: 0 warnings, 0 errors.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 458/459\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (17% chance of a revert or follow-up fix, from n8n's history)\n- Not reproduced: no engine run here diverged from native for non-item results (legacy/quickjs pass either way); the motivating divergence is presumably in the vm bridge, whose source and test project were not available here\n- In combined binary mode, a json that happens to have an own object-valued `json` key still passes as item-shaped and stays native\n- first()/last() returning undefined now goes to the engine instead of being evaluated natively — slower, but the result should be the same\n- all() now runs an O(n) shape check over at most MAX_RESULT_LENGTH elements on each call, including inside callback bodies\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $1.03\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "tests_too_strict",
+  "reviewer_would_accept": true,
+  "reason": "The change makes node reference calls fall back to the engine unless they return a real item (or an array of items), which covers the issue. It is stricter than the merged fix: it requires an object `json` and also falls back on `undefined`. The hidden tests probably fail on that, since the merged fix keeps `undefined` and any non-array object native. Output stays correct either way. The cost is only some lost native-path performance, plus a somewhat wider scope with the extra `.item` guard in `evalMember`.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0187287
+ }
+}

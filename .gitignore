@@ -1,9 +1,9 @@
 node_modules/
 dist/
-runs/
+/runs/
 data/cache/
 *.tsbuildinfo
 apps/console/dist/
 apps/console/test-results/
 apps/console/playwright-report/
-runs/
+/runs/

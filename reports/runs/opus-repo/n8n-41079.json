@@ -1,0 +1,83 @@
+{
+ "task": "n8n-41079",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed it: array `includes`, `indexOf` and `lastIndexOf` are now charged against the native evaluation work budget by how much they read from their elements, not one unit per element. Tests, typecheck and lint all pass.\n\n**Cause:** `evalCall` charged these three methods the array's length. But when the argument is a string, each string element of the same length is compared character by character. So an array of a few very large strings cost almost nothing to the budget, even though each call read all of them. Inside a callback body such as `$json.many.some(n => $json.list.includes(n))`, that cost repeats on every visit.\n\n**Change (`packages/workflow/src/expressions/native-evaluation/evaluator.ts`):**\n- A new set, `COMPARES_ELEMENTS`, lists the three methods.\n- A new helper, `comparisonWeight`, adds up each string element's length (at least 1) plus 1 for every other element. It only looks at the top level, because nested arrays and objects are compared by reference and their contents are never read.\n- For these methods on an array, `evalCall` now charges that weight instead of the plain size. `preflightSize` still runs first, so the existing cap on the array's length still applies.\n\nThe weight is only charged against the overall work budget (`MAX_WORK`). It is deliberately not checked against the per-call result cap. As a result, a single call over large total content still runs natively and only uses up budget, instead of handing off to the engine.\n\n**Test (`test/native-evaluation-parity.test.ts`):** one case for each of the three methods. A callback with 10 visits compares a probe string against two half-cap strings of the same length; that now goes over the budget and hands off to the engine. The same expression over small strings is still handled natively with the correct result.\n\n**Verification:**\n- `acdc-test test/native-evaluation-parity.test.ts`: 922 passed.\n- With the fix temporarily switched off, the 6 new test runs failed (3 methods × legacy and quickjs engines). With it back on, all pass.\n- `acdc-typecheck` printed no errors.\n- `acdc-lint` on both files: 0 warnings, 0 errors.\n\nOne thing for a reviewer: the charge is an upper bound. String elements are charged even when the argument isn't a string, or when their lengths differ and the comparison would stop early.\n\n{\"summary\": \"Array includes/indexOf/lastIndexOf in native evaluation charged the work budget one unit per element, but comparing a string argument against same-length string elements reads their content, so a few large strings (especially inside a callback body) used almost no budget. Added COMPARES_ELEMENTS and comparisonWeight (top-level string lengths plus 1 per other element) in evaluator.ts, and evalCall now charges that weight for these methods on arrays. preflightSize still runs, so the receiver length cap is unchanged. Added parity tests for each of the three methods.\", \"verification\": \"acdc-test test/native-evaluation-parity.test.ts: 922 passed. With the fix disabled, the 6 new test runs failed (3 methods x legacy/quickjs). acdc-typecheck printed no errors. acdc-lint on both changed files: 0 warnings, 0 errors.\", \"tests_pass\": true, \"risks\": [\"The charge is an upper bound: string elements are charged even when the argument is not a string or their lengths differ, so some expressions that compare many large strings now hand off to the engine sooner.\", \"The comparison weight is only charged against MAX_WORK, not checked against MAX_RESULT_LENGTH, so one call over large total content still runs natively and only uses budget.\", \"Only top-level elements are counted, on the basis that nested values are compared by reference.\"]}",
+  "cost_usd": 0.44586040000000005,
+  "turns": 17,
+  "tool_calls": 16,
+  "tests_run": 3,
+  "denials": 0,
+  "tokens_in": 279735,
+  "tokens_out": 6056,
+  "model": "claude-opus-5-5",
+  "seconds": 140
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 458,
+   "total": 458
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards element-comparing methods are charged by element content"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 49,
+  "reference_lines": 30,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1782085080318342,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 6883c56c6..adfa0c19f 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -286,6 +286,27 @@ function flatSize(array: unknown[], depth: number): number {\n  */\n const STRINGIFIES_ELEMENTS = new Set(['join', 'toSorted']);\n \n+/**\n+ * Array methods that compare their argument against every element. A string\n+ * compared against a string element of the same length is compared by\n+ * content, so one call over a few large strings is work proportional to\n+ * their size, not to the element count.\n+ */\n+const COMPARES_ELEMENTS = new Set(['includes', 'indexOf', 'lastIndexOf']);\n+\n+/**\n+ * Upper bound on the work of comparing an argument against every element:\n+ * the length of each string element, one per other element. Elements are\n+ * compared by reference past the top level, so nested content is not read.\n+ */\n+function comparisonWeight(receiver: unknown[]): number {\n+\tlet weight = 0;\n+\tfor (const element of receiver) {\n+\t\tweight += typeof element === 'string' ? Math.max(element.length, 1) : 1;\n+\t}\n+\treturn weight;\n+}\n+\n /**\n  * Hands off to the engine unless every element is a primitive. O(n) over a\n  * receiver the size cap already limits, and runs before anything is\n@@ -390,7 +411,10 @@ function evalCall(node: Extract<SimpleNode, { kind: 'call' }>, env: Env): unknow\n \t\tif (STRINGIFIES_ELEMENTS.has(node.method)) assertPrimitiveElements(receiver);\n \t\tif (node.method === 'concat') assertConcatWeight(receiver, args);\n \t}\n-\tenv.charge(preflightSize(receiver, node.method, args));\n+\tconst size = preflightSize(receiver, node.method, args);\n+\tenv.charge(\n+\t\tisArray(receiver) && COMPARES_ELEMENTS.has(node.method) ? comparisonWeight(receiver) : size,\n+\t);\n \n \treturn bounded(method.apply(receiver, args));\n }\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex 40cb5da55..2495dcc17 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -642,6 +642,29 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\t).toEqual({ handled: false });\n \t\t});\n \n+\t\t// An equal-length string argument is compared against each string\n+\t\t// element by content, so the comparing array methods are charged for the\n+\t\t// characters of their elements, not one unit per element.\n+\t\ttest.each(['includes', 'indexOf', 'lastIndexOf'])(\n+\t\t\t'array %s is charged for the content of its elements',\n+\t\t\t(method) => {\n+\t\t\t\tconst big = 'x'.repeat(MAX_RESULT_LENGTH / 2);\n+\t\t\t\tconst probe = `${'x'.repeat(big.length - 1)}y`;\n+\t\t\t\tconst visits = MAX_WORK / MAX_RESULT_LENGTH;\n+\t\t\t\tconst expr = `{{ $json.many.some(n => $json.list.${method}(n) > 0) }}`;\n+\t\t\t\texpect(\n+\t\t\t\t\tnativeOn(expr, {\n+\t\t\t\t\t\t$json: { many: new Array<string>(visits).fill(probe), list: [big, big] },\n+\t\t\t\t\t}),\n+\t\t\t\t).toEqual({ handled: false });\n+\t\t\t\texpect(\n+\t\t\t\t\tnativeOn(expr, {\n+\t\t\t\t\t\t$json: { many: new Array<string>(visits).fill(probe), list: ['a', 'b'] },\n+\t\t\t\t\t}),\n+\t\t\t\t).toEqual({ handled: true, value: false });\n+\t\t\t},\n+\t\t);\n+\n \t\t// A `$parameter` read resolves a nested expression in its own evaluation,\n \t\t// with its own budgets. Read once per evaluation (as the vm bridge does),\n \t\t// a body cannot resolve it once per element.\n"
+ },
+ "evidence": "## fix(core): Charge element content for comparing array methods in native evaluation (no-changelog)\n\nArray includes/indexOf/lastIndexOf in native evaluation charged the work budget one unit per element, but comparing a string argument against same-length string elements reads their content, so a few large strings (especially inside a callback body) used almost no budget. Added COMPARES_ELEMENTS and comparisonWeight (top-level string lengths plus 1 per other element) in evaluator.ts, and evalCall now charges that weight for these methods on arrays. preflightSize still runs, so the receiver length cap is unchanged. Added parity tests for each of the three methods.\n\n### What changed\n- 1 source file(s), 1 test file(s), 49 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test test/native-evaluation-parity.test.ts: 922 passed. With the fix disabled, the 6 new test runs failed (3 methods x legacy/quickjs). acdc-typecheck printed no errors. acdc-lint on both changed files: 0 warnings, 0 errors.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 458/458\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- The charge is an upper bound: string elements are charged even when the argument is not a string or their lengths differ, so some expressions that compare many large strings now hand off to the engine sooner.\n- The comparison weight is only charged against MAX_WORK, not checked against MAX_RESULT_LENGTH, so one call over large total content still runs natively and only uses budget.\n- Only top-level elements are counted, on the basis that nested values are compared by reference.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.45\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change charges includes, indexOf and lastIndexOf by string element content, but leaves toSorted uncharged for its per-comparison stringification, which is about 2 × content × log n. toSorted is one of the comparing array methods the issue and the merged fix cover. The change also replaces the preflight charge for those three methods instead of adding to it, so it can undercharge.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.016050699999999998
+ }
+}

@@ -1,0 +1,82 @@
+{
+ "task": "n8n-32970",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`$self` now resolves expression-mode values, such as credential template fields starting with `=`. The data-proxy tests and typecheck pass. Lint didn't run: `acdc-lint` failed with \"Failed to find tsgolint executable\".\n\n**Cause:** In `selfGetter` in `workflow-data-proxy.ts`, `$self.foo` returned the raw string from `selfData`, for example `\"={{ ... }}\"`. It never evaluated it.\n\n**Fix:** The getter now evaluates values that start with `=`. It uses the same data context and passes `selfData` without the key being read, so `$self.a = \"={{ $self.a }}\"` can't recurse forever. In that case it returns `undefined`.\n\nI didn't find the caller that supplies credential `selfData`, which would be outside `packages/workflow`. I only changed the getter, so I haven't checked that path.\n\n**Tests:** I added a `$self` block to `test/workflow-data-proxy.test.ts`. It covers plain values returned as is, expression values resolved (including `$self.a` referenced from another value), and a self-reference not looping.\n\n{\"summary\": \"WorkflowDataProxy's $self getter now resolves expression-mode values (strings starting with '=') instead of returning them raw. It resolves them via workflow.expression.resolveSimpleParameterValue with the same context, and the key being read is removed from selfData to prevent infinite recursion. Added tests for plain, expression, chained and self-referential values.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 164 passed, including the 3 new tests. acdc-typecheck: clean. acdc-lint failed to start (tsgolint executable not found), so lint was not run. I did not run the rest of the package's tests.\", \"tests_pass\": true, \"risks\": [\"Lint was not run because acdc-lint could not find tsgolint.\", \"Self-referential $self values now resolve to undefined; a reviewer should confirm that is the desired behavior.\", \"Cycles through two or more keys (a -> b -> a) are not caught by the single-key omission and could still recurse.\", \"Each $self read now evaluates the expression, so results are not cached.\", \"I did not locate the caller that supplies credential selfData (outside packages/workflow), so the end-to-end credential path is untested.\"]}",
+  "cost_usd": 0.17350999999999997,
+  "turns": 23,
+  "tool_calls": 22,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 302682,
+  "tokens_out": 5446,
+  "model": "claude-sonnet-5-5",
+  "seconds": 71
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 3,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 345,
+   "total": 345
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 65,
+  "reference_lines": 28,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1848414567946126,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex aa2721197..0b6f2cc1f 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -9,6 +9,7 @@ import { augmentArray, augmentObject } from './augment-object';\n import { AGENT_LANGCHAIN_NODE_TYPE, SCRIPTING_NODE_TYPES, BINARY_MODE_COMBINED } from './constants';\n import { UnexpectedError } from './errors';\n import { ExpressionError, type ExpressionErrorOptions } from './errors/expression.error';\n+import { isExpression } from './expressions/expression-helpers';\n import { getGlobalState } from './global-state';\n import { NodeConnectionTypes } from './interfaces';\n import type {\n@@ -199,7 +200,27 @@ export class WorkflowDataProxy {\n \t\t\t\tget(_, name) {\n \t\t\t\t\tif (name === 'isProxy') return true;\n \t\t\t\t\tname = name.toString();\n-\t\t\t\t\treturn that.selfData[name];\n+\t\t\t\t\tconst value = that.selfData[name];\n+\t\t\t\t\tif (!isExpression(value)) return value;\n+\n+\t\t\t\t\t// Expression-mode value (e.g. a credential template field): resolve it.\n+\t\t\t\t\t// The key itself is dropped from $self so a self-reference can't recurse forever.\n+\t\t\t\t\tconst { [name]: _omitted, ...rest } = that.selfData;\n+\t\t\t\t\treturn that.workflow.expression.resolveSimpleParameterValue(\n+\t\t\t\t\t\tvalue,\n+\t\t\t\t\t\tthat.siblingParameters,\n+\t\t\t\t\t\tthat.runExecutionData,\n+\t\t\t\t\t\tthat.runIndex,\n+\t\t\t\t\t\tthat.itemIndex,\n+\t\t\t\t\t\tthat.activeNodeName,\n+\t\t\t\t\t\tthat.connectionInputData,\n+\t\t\t\t\t\tthat.mode,\n+\t\t\t\t\t\tthat.additionalKeys,\n+\t\t\t\t\t\tthat.executeData,\n+\t\t\t\t\t\tfalse,\n+\t\t\t\t\t\trest,\n+\t\t\t\t\t\tthat.contextNodeName,\n+\t\t\t\t\t);\n \t\t\t\t},\n \t\t\t},\n \t\t);\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex cd760a907..0e347f13b 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -98,6 +98,48 @@ const getProxyFromFixture = (\n };\n \n describe('WorkflowDataProxy', () => {\n+\tdescribe('$self', () => {\n+\t\tconst fixture = loadFixture('multiple_outputs');\n+\t\tconst getSelf = (selfData: Record<string, string>) => {\n+\t\t\tconst workflow = new Workflow({\n+\t\t\t\tid: '123',\n+\t\t\t\tname: 'test workflow',\n+\t\t\t\tnodes: fixture.workflow.nodes,\n+\t\t\t\tconnections: fixture.workflow.connections,\n+\t\t\t\tactive: false,\n+\t\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\t});\n+\t\t\treturn new WorkflowDataProxy(\n+\t\t\t\tworkflow,\n+\t\t\t\tnull,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'Edit Fields',\n+\t\t\t\t[],\n+\t\t\t\t{},\n+\t\t\t\t'integrated',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t\t-1,\n+\t\t\t\tselfData,\n+\t\t\t).getDataProxy().$self as Record<string, unknown>;\n+\t\t};\n+\n+\t\ttest('returns plain values as is', () => {\n+\t\t\texpect(getSelf({ a: 'plain' }).a).toBe('plain');\n+\t\t});\n+\n+\t\ttest('resolves expression-mode values', () => {\n+\t\t\tconst $self = getSelf({ a: '={{ 1 + 2 }}', b: '={{ $self.a }}-x' });\n+\t\t\texpect($self.a).toBe(3);\n+\t\t\texpect($self.b).toBe('3-x');\n+\t\t});\n+\n+\t\ttest('does not recurse forever on self-references', () => {\n+\t\t\texpect(getSelf({ a: '={{ $self.a }}' }).a).toBeUndefined();\n+\t\t});\n+\t});\n+\n \tdescribe('$(If))', () => {\n \t\tconst fixture = loadFixture('multiple_outputs');\n \t\tconst proxy = getProxyFromFixture(fixture.workflow, fixture.run, 'Edit Fields');\n"
+ },
+ "evidence": "## fix(core): Resolve expression-mode $self values in credential templates\n\nWorkflowDataProxy's $self getter now resolves expression-mode values (strings starting with '=') instead of returning them raw. It resolves them via workflow.expression.resolveSimpleParameterValue with the same context, and the key being read is removed from selfData to prevent infinite recursion. Added tests for plain, expression, chained and self-referential values.\n\n### What changed\n- 1 source file(s), 1 test file(s), 65 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 164 passed, including the 3 new tests. acdc-typecheck: clean. acdc-lint failed to start (tsgolint executable not found), so lint was not run. I did not run the rest of the package's tests.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 3/3; tests that passed before: 345/345\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- Lint was not run because acdc-lint could not find tsgolint.\n- Self-referential $self values now resolve to undefined; a reviewer should confirm that is the desired behavior.\n- Cycles through two or more keys (a -> b -> a) are not caught by the single-key omission and could still recurse.\n- Each $self read now evaluates the expression, so results are not cached.\n- I did not locate the caller that supplies credential selfData (outside packages/workflow), so the end-to-end credential path is untested.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.17\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change resolves expression-mode $self values in the proxy getter via resolveSimpleParameterValue, dropping the key itself from $self to avoid infinite recursion; this addresses the issue and no hidden tests fail. Differences from the merged fix (using siblingParameters and omitting the self key) are reasonable design choices, though a reviewer might want a test for the self-reference case.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.011438700000000001
+ }
+}

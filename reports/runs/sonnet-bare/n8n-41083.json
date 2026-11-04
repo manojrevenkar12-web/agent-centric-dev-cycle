@@ -1,0 +1,83 @@
+{
+ "task": "n8n-41083",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Combined binary mode no longer throws when a node-reference result isn't shaped like an item. Tests pass, typecheck is clean and lint has one error that isn't from my change.\n\n**Cause:** `WorkflowDataProxy.returnExecutionData` unwrapped `.json` from every result when `binaryMode` is `combined`. For a result like `undefined`, that threw a `TypeError` instead of reaching the engine. I never reproduced the original failure on the unfixed code. I'm inferring that case from the code, not from a failing test.\n\n**Fix:** in `src/workflow-data-proxy.ts`, results that are not objects with a `json` key are now returned unchanged. Normal items still unwrap to `.json`, and arrays unwrap per element.\n\n**Test:** I added a case in `test/workflow-data-proxy.test.ts` that calls `returnExecutionData` directly in combined mode. It covers `undefined`, `null`, an array mixing an item with `undefined`, and a normal item.\n\n{\"summary\": \"In WorkflowDataProxy.returnExecutionData (combined binary mode), results that aren't objects with a `json` key (undefined, null) are now returned unchanged instead of having `.json` read from them, which threw a TypeError. Added a test calling the method directly for undefined, null, mixed arrays and normal items.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 2 files, 370 tests passed. acdc-typecheck printed no errors. acdc-lint on the two changed files reports 1 error, array-type at test/workflow-data-proxy.test.ts:2433, a line I did not edit. I did not run the new test against the unfixed code, so I have not confirmed it fails there.\", \"tests_pass\": true, \"risks\": [\"The issue text is vague; I assumed 'without an item shape' means undefined/null or non-object results. Confirm that is the case the issue meant.\", \"The new test calls the private method through a prototype cast with a fake `this`, so it is coupled to the method name.\", \"A non-item result that has no `json` key is returned as-is, not as `undefined`; a reviewer should check that is the intended behaviour.\"]}",
+  "cost_usd": 0.1324763,
+  "turns": 12,
+  "tool_calls": 11,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 155144,
+  "tokens_out": 3697,
+  "model": "claude-sonnet-5-5",
+  "seconds": 58
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 459,
+   "total": 459
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards a node reference call that returns no item shape hands off to the engine"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 23,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1973076140726953,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex c667ed83a..1c0b603ea 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -140,11 +140,16 @@ export class WorkflowDataProxy {\n \t\tif (fullItem) return data;\n \t\tif (this.workflow.settings?.binaryMode !== BINARY_MODE_COMBINED) return data;\n \n+\t\t// Results that are not shaped like an item (e.g. undefined for a missing\n+\t\t// pinned item) have no `json` to unwrap, so hand them back unchanged.\n+\t\tconst unwrap = (item: INodeExecutionData) =>\n+\t\t\titem !== null && typeof item === 'object' && 'json' in item ? item.json : item;\n+\n \t\tif (Array.isArray(data)) {\n-\t\t\treturn data.map((i) => i.json);\n+\t\t\treturn data.map(unwrap);\n \t\t}\n \n-\t\treturn data.json;\n+\t\treturn unwrap(data);\n \t}\n \n \t/**\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex c7aca56dc..adf52e546 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -378,6 +378,20 @@ describe('WorkflowDataProxy', () => {\n \t\t\ttest('$item should return json data', () => {\n \t\t\t\texpect(proxyAtProcessData.$item).toEqual({ id: 1, name: 'Item 1' });\n \t\t\t});\n+\n+\t\t\ttest('results without an item shape are returned unchanged', () => {\n+\t\t\t\tconst call = (data: unknown) =>\n+\t\t\t\t\t(\n+\t\t\t\t\t\tWorkflowDataProxy.prototype as unknown as {\n+\t\t\t\t\t\t\treturnExecutionData: (this: unknown, d: unknown) => unknown;\n+\t\t\t\t\t\t}\n+\t\t\t\t\t).returnExecutionData.call({ workflow: { settings: { binaryMode: BINARY_MODE_COMBINED } } }, data);\n+\n+\t\t\t\texpect(call(undefined)).toBeUndefined();\n+\t\t\t\texpect(call(null)).toBeNull();\n+\t\t\t\texpect(call([{ json: { a: 1 } }, undefined])).toEqual([{ a: 1 }, undefined]);\n+\t\t\t\texpect(call({ json: { a: 1 } })).toEqual({ a: 1 });\n+\t\t\t});\n \t\t});\n \n \t\tdescribe('Combined mode with $() resolveFullItem parameter', () => {\n"
+ },
+ "evidence": "## fix(core): Hand node reference results without an item shape to the engine (no-changelog)\n\nIn WorkflowDataProxy.returnExecutionData (combined binary mode), results that aren't objects with a `json` key (undefined, null) are now returned unchanged instead of having `.json` read from them, which threw a TypeError. Added a test calling the method directly for undefined, null, mixed arrays and normal items.\n\n### What changed\n- 1 source file(s), 1 test file(s), 23 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 2 files, 370 tests passed. acdc-typecheck printed no errors. acdc-lint on the two changed files reports 1 error, array-type at test/workflow-data-proxy.test.ts:2433, a line I did not edit. I did not run the new test against the unfixed code, so I have not confirmed it fails there.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 459/459\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (20% chance of a revert or follow-up fix, from n8n's history)\n- The issue text is vague; I assumed 'without an item shape' means undefined/null or non-object results. Confirm that is the case the issue meant.\n- The new test calls the private method through a prototype cast with a fake `this`, so it is coupled to the method name.\n- A non-item result that has no `json` key is returned as-is, not as `undefined`; a reviewer should check that is the intended behaviour.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.13\n",
+ "judge": {
+  "verdict": "wrong",
+  "cause": "wrong_cause",
+  "reviewer_would_accept": false,
+  "reason": "The issue asks the native evaluator to hand node reference results that lack an item shape back to the engine (throw EngineFallbackError in evalNodeRefCall). The engineer instead made the data proxy's binary-mode unwrapping tolerate non-item values, which never makes the evaluator fall back, so the structural-guard parity test still fails.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0092727
+ }
+}

@@ -1,0 +1,82 @@
+{
+ "task": "n8n-26550",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The fix is in and the expression tests pass, but the typecheck reports one error and lint did not run.\n\n**Cause:** `packages/workflow/src/expression.ts:477` built the `$process` object for expressions with `version: process.pid`, so `process.version` returned the PID (e.g. `2897`) instead of the Node version (e.g. `v22.22.0`).\n\n**Changes:**\n- `packages/workflow/src/expression.ts:477`: `version: process.pid` → `version: process.version`.\n- `packages/workflow/test/expression.test.ts`: added a test that evaluates `{{ process.version }}` and `{{ process.pid }}` and checks each against the real value. Before the fix, the `process.version` assertion failed with `expected 2897 to be 'v22.22.0'`.\n\n**Verification:**\n- `acdc-test` on `expression.test.ts` and `expression-sandboxing.test.ts`: 2 files, 290 tests, all passed.\n- `acdc-typecheck`: fails with `src/expression.ts(215,5): error TS2353: Object literal may only specify known properties, and 'bridge' does not exist in type 'EvaluatorConfig'`. That line is in code I did not touch. It looks like the installed `@n8n/expression-runtime` types don't match the source, but I did not confirm that.\n- `acdc-lint`: could not run. It fails with `Failed to find tsgolint executable`, which is an environment problem.\n- A bash call with piped/chained commands was denied, so I re-ran the test command without pipes.\n\nI did not commit anything.\n\n```json\n{\"summary\": \"$process.version in the expression sandbox returned process.pid because expression.ts set version: process.pid. Changed it to process.version and added a regression test that checks process.version and process.pid against the real values.\", \"verification\": \"acdc-test on expression.test.ts and expression-sandboxing.test.ts: 290/290 passed. New test failed before the fix (got PID 2897, expected v22.22.0). acdc-typecheck fails on expression.ts:215 ('bridge' not in EvaluatorConfig), a line I did not change; likely a @n8n/expression-runtime type mismatch, not confirmed. acdc-lint could not run (tsgolint executable missing).\", \"tests_pass\": true, \"risks\": [\"acdc-typecheck reports a pre-existing-looking error at expression.ts:215 that is unrelated to this change; please confirm it also fails on master\", \"Lint has not been run; please run n8n's linter on the two changed files\", \"The fix is one line; reviewers should confirm no code relied on the PID being exposed as version\"]}\n```",
+  "cost_usd": 0.009809050000000001,
+  "turns": 19,
+  "tool_calls": 18,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 269101,
+  "tokens_out": 5564,
+  "model": "claude-haiku-5-5",
+  "seconds": 55
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 169,
+   "total": 169
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expression.ts",
+   "packages/workflow/test/expression.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/expression.test.ts"
+  ],
+  "lines_changed": 46,
+  "reference_lines": 2,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expression.ts b/packages/workflow/src/expression.ts\nindex 63f09629d..5d81b7dc8 100644\n--- a/packages/workflow/src/expression.ts\n+++ b/packages/workflow/src/expression.ts\n@@ -474,7 +474,7 @@ export class Expression {\n \t\t\t\t\t\tpid: process.pid,\n \t\t\t\t\t\tppid: process.ppid,\n \t\t\t\t\t\trelease: process.release,\n-\t\t\t\t\t\tversion: process.pid,\n+\t\t\t\t\t\tversion: process.version,\n \t\t\t\t\t\tversions: process.versions,\n \t\t\t\t\t}\n \t\t\t\t: {};\ndiff --git a/packages/workflow/test/expression.test.ts b/packages/workflow/test/expression.test.ts\nindex 58fe16e20..503040289 100644\n--- a/packages/workflow/test/expression.test.ts\n+++ b/packages/workflow/test/expression.test.ts\n@@ -853,6 +853,50 @@ describe('Expression', () => {\n \t\t\texpect(result).toBe(84);\n \t\t});\n \n+\t\tit('should expose process.version and process.pid as distinct values', () => {\n+\t\t\tconst nodeTypes = Helpers.NodeTypes();\n+\t\t\tconst workflow = new Workflow({\n+\t\t\t\tid: 'test',\n+\t\t\t\tname: 'Test',\n+\t\t\t\tnodes: [\n+\t\t\t\t\t{\n+\t\t\t\t\t\tid: '1',\n+\t\t\t\t\t\tname: 'TestNode',\n+\t\t\t\t\t\ttype: 'n8n-nodes-base.set',\n+\t\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\t\tposition: [0, 0],\n+\t\t\t\t\t\tparameters: {},\n+\t\t\t\t\t},\n+\t\t\t\t],\n+\t\t\t\tconnections: {},\n+\t\t\t\tactive: false,\n+\t\t\t\tnodeTypes,\n+\t\t\t});\n+\n+\t\t\tconst dataProxy = new WorkflowDataProxy(\n+\t\t\t\tworkflow,\n+\t\t\t\tnull,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'TestNode',\n+\t\t\t\t[{ json: {} }],\n+\t\t\t\t{},\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t);\n+\t\t\tconst data = dataProxy.getDataProxy();\n+\n+\t\t\tconst timezone = workflow.settings?.timezone ?? 'UTC';\n+\t\t\tconst expression = new Expression(timezone);\n+\n+\t\t\texpect(expression.resolveSimpleParameterValue('={{ process.version }}', data, false)).toBe(\n+\t\t\t\tprocess.version,\n+\t\t\t);\n+\t\t\texpect(expression.resolveSimpleParameterValue('={{ process.pid }}', data, false)).toBe(\n+\t\t\t\tprocess.pid,\n+\t\t\t);\n+\t\t});\n+\n \t\tit('should handle non-expression values', () => {\n \t\t\tconst nodeTypes = Helpers.NodeTypes();\n \t\t\tconst workflow = new Workflow({\n"
+ },
+ "evidence": "## fix(core): Correct `process.version` in expression sandbox\n\n$process.version in the expression sandbox returned process.pid because expression.ts set version: process.pid. Changed it to process.version and added a regression test that checks process.version and process.pid against the real values.\n\n### What changed\n- 1 source file(s), 1 test file(s), 46 changed lines\n- `packages/workflow/src/expression.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test on expression.test.ts and expression-sandboxing.test.ts: 290/290 passed. New test failed before the fix (got PID 2897, expected v22.22.0). acdc-typecheck fails on expression.ts:215 ('bridge' not in EvaluatorConfig), a line I did not change; likely a @n8n/expression-runtime type mismatch, not confirmed. acdc-lint could not run (tsgolint executable missing).\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 169/169\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- acdc-typecheck reports a pre-existing-looking error at expression.ts:215 that is unrelated to this change; please confirm it also fails on master\n- Lint has not been run; please run n8n's linter on the two changed files\n- The fix is one line; reviewers should confirm no code relied on the PID being exposed as version\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The engineer's change is identical to the merged fix: it replaces `process.pid` with `process.version` for the `version` field in the expression sandbox's process object. No hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.006444699999999999
+ }
+}

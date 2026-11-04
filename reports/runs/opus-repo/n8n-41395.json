@@ -1,0 +1,87 @@
+{
+ "task": "n8n-41395",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed it: when a provider leaves out the input or output token count, that count is now treated as 0 instead of turning the running total into `NaN`.\n\n**Cause:** `accumulateTokenUsage` in `src/metadata-utils.ts` added whatever count it was given straight onto the previous total. If a provider left a count out, that meant adding `undefined`, and the stored total became `NaN` for that run and every one after it. The telemetry code that reads these totals (`extractNodeTokenUsage` in `src/telemetry-helpers.ts`) only fell back to 0 for `null`/`undefined`, so the `NaN` went straight into the AI token counts reported to telemetry.\n\n**Fix:**\n- `src/metadata-utils.ts`: a small `toTokenCount` helper keeps only real finite numbers and turns anything else into 0. It's applied to both the new counts and the previously stored totals, so a total that's already broken stops spreading. The two count parameters now also accept `null` and `undefined`.\n- `src/telemetry-helpers.ts`: when reading stored totals, a count that isn't a finite number now counts as 0.\n\n**Tests:** two new cases in `test/metadata-utils.test.ts` (missing, `null` and `NaN` counts; a broken stored total) and extra assertions in the existing standalone-vendor-node test in `test/telemetry-helpers.test.ts`.\n\n**Verification:** the two test files pass (131 tests). The linter reported 0 warnings and 0 errors on the four changed files. `acdc-typecheck` produced no output, which I'm reading as a pass, though it didn't print an explicit success message.\n\n{\"summary\": \"accumulateTokenUsage added provider token counts directly, so when a provider left out input or output tokens (undefined/NaN) the accumulated tokenUsage became NaN and spread into telemetry ai_input_tokens/ai_output_tokens. It now treats any count that isn't a finite number (new or previously stored) as 0, and the parameters accept null/undefined. extractNodeTokenUsage in telemetry-helpers also ignores stored token counts that aren't finite. Added tests for both.\", \"verification\": \"acdc-test test/metadata-utils.test.ts test/telemetry-helpers.test.ts: 2 files, 131 tests passed. acdc-lint on the 4 changed files: 0 warnings, 0 errors. acdc-typecheck: no output, read as a pass (no explicit success message).\", \"tests_pass\": true, \"risks\": [\"accumulateTokenUsage now accepts null/undefined; callers in other packages (nodes-langchain) that pass provider usage fields could use this to drop their own fallbacks, but no caller changes are needed\", \"A missing count is recorded as 0 rather than 'unknown', so totals may undercount when a provider leaves one side out, which is the behaviour the issue asks for\"]}",
+  "cost_usd": 0.206343,
+  "turns": 13,
+  "tool_calls": 12,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 96009,
+  "tokens_out": 4355,
+  "model": "claude-opus-5-5",
+  "seconds": 64
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 5,
+   "total": 7
+  },
+  "pass_to_pass": {
+   "passed": 9,
+   "total": 9
+  },
+  "failing": [
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore a negative count and keep the previous total",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should keep a valid side when the other side is not usable"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/metadata-utils.ts",
+   "packages/workflow/src/telemetry-helpers.ts",
+   "packages/workflow/test/metadata-utils.test.ts",
+   "packages/workflow/test/telemetry-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/metadata-utils.test.ts",
+   "packages/workflow/test/telemetry-helpers.test.ts"
+  ],
+  "lines_changed": 54,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.15728601880422022,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/metadata-utils.ts b/packages/workflow/src/metadata-utils.ts\nindex 9c35e3388..afb87af09 100644\n--- a/packages/workflow/src/metadata-utils.ts\n+++ b/packages/workflow/src/metadata-utils.ts\n@@ -23,16 +23,21 @@ function parseErrorResponseWorkflowMetadata(response: unknown): ISubWorkflowMeta\n \t};\n }\n \n+/** Returns the count if it is a valid token count, otherwise 0 (e.g. when a provider omits it) */\n+function toTokenCount(value: unknown): number {\n+\treturn typeof value === 'number' && Number.isFinite(value) ? value : 0;\n+}\n+\n export function accumulateTokenUsage(\n \tcontext: IExecuteFunctions,\n-\tinputTokens: number,\n-\toutputTokens: number,\n+\tinputTokens: number | null | undefined,\n+\toutputTokens: number | null | undefined,\n ): void {\n \tconst prev = context.getExecuteData()?.metadata?.tokenUsage;\n \tcontext.setMetadata({\n \t\ttokenUsage: {\n-\t\t\tinputTokens: (prev?.inputTokens ?? 0) + inputTokens,\n-\t\t\toutputTokens: (prev?.outputTokens ?? 0) + outputTokens,\n+\t\t\tinputTokens: toTokenCount(prev?.inputTokens) + toTokenCount(inputTokens),\n+\t\t\toutputTokens: toTokenCount(prev?.outputTokens) + toTokenCount(outputTokens),\n \t\t},\n \t});\n }\ndiff --git a/packages/workflow/src/telemetry-helpers.ts b/packages/workflow/src/telemetry-helpers.ts\nindex e12c7de8b..2f6c22436 100644\n--- a/packages/workflow/src/telemetry-helpers.ts\n+++ b/packages/workflow/src/telemetry-helpers.ts\n@@ -106,8 +106,9 @@ function extractNodeTokenUsage(\n \t\t\t}\n \t\t} else if (task.metadata?.tokenUsage) {\n \t\t\t// Standalone vendor nodes — token data captured via setMetadata before simplify\n-\t\t\tinput += task.metadata.tokenUsage.inputTokens ?? 0;\n-\t\t\toutput += task.metadata.tokenUsage.outputTokens ?? 0;\n+\t\t\tconst { inputTokens, outputTokens } = task.metadata.tokenUsage;\n+\t\t\tinput += Number.isFinite(inputTokens) ? inputTokens : 0;\n+\t\t\toutput += Number.isFinite(outputTokens) ? outputTokens : 0;\n \t\t}\n \t}\n \treturn input > 0 || output > 0 ? { input, output } : undefined;\ndiff --git a/packages/workflow/test/metadata-utils.test.ts b/packages/workflow/test/metadata-utils.test.ts\nindex 19da98786..4c8462823 100644\n--- a/packages/workflow/test/metadata-utils.test.ts\n+++ b/packages/workflow/test/metadata-utils.test.ts\n@@ -45,6 +45,28 @@ describe('MetadataUtils', () => {\n \t\t\texpect(metadata?.subExecutionsCount).toBe(3);\n \t\t\texpect(metadata?.tokenUsage).toEqual({ inputTokens: 100, outputTokens: 50 });\n \t\t});\n+\n+\t\tit('should ignore token counts omitted by the provider', () => {\n+\t\t\tconst context = createMockContext();\n+\t\t\taccumulateTokenUsage(context, 100, undefined);\n+\t\t\taccumulateTokenUsage(context, undefined, 30);\n+\t\t\taccumulateTokenUsage(context, null, NaN);\n+\t\t\texpect(context.getExecuteData().metadata?.tokenUsage).toEqual({\n+\t\t\t\tinputTokens: 100,\n+\t\t\t\toutputTokens: 30,\n+\t\t\t});\n+\t\t});\n+\n+\t\tit('should recover from previously stored invalid token counts', () => {\n+\t\t\tconst context = createMockContext({\n+\t\t\t\ttokenUsage: { inputTokens: NaN, outputTokens: null as unknown as number },\n+\t\t\t});\n+\t\t\taccumulateTokenUsage(context, 10, 5);\n+\t\t\texpect(context.getExecuteData().metadata?.tokenUsage).toEqual({\n+\t\t\t\tinputTokens: 10,\n+\t\t\t\toutputTokens: 5,\n+\t\t\t});\n+\t\t});\n \t});\n \n \tdescribe('parseMetadataFromError', () => {\ndiff --git a/packages/workflow/test/telemetry-helpers.test.ts b/packages/workflow/test/telemetry-helpers.test.ts\nindex 4769a7efa..bbaa06d39 100644\n--- a/packages/workflow/test/telemetry-helpers.test.ts\n+++ b/packages/workflow/test/telemetry-helpers.test.ts\n@@ -2517,6 +2517,20 @@ describe('generateNodesGraph', () => {\n \t\t\tconst result = generateNodesGraph(workflow, nodeTypes, { runData });\n \t\t\texpect(result.nodeGraph.nodes['0'].ai_input_tokens).toBe(300);\n \t\t\texpect(result.nodeGraph.nodes['0'].ai_output_tokens).toBe(130);\n+\n+\t\t\tconst runDataWithInvalidCounts: IRunData = {\n+\t\t\t\tAnthropic: [\n+\t\t\t\t\tmakeTaskData(100, NaN),\n+\t\t\t\t\tmakeTaskData(NaN, 20),\n+\t\t\t\t\tmakeTaskData(null as unknown as number, 10),\n+\t\t\t\t],\n+\t\t\t};\n+\n+\t\t\tconst resultWithInvalidCounts = generateNodesGraph(workflow, nodeTypes, {\n+\t\t\t\trunData: runDataWithInvalidCounts,\n+\t\t\t});\n+\t\t\texpect(resultWithInvalidCounts.nodeGraph.nodes['0'].ai_input_tokens).toBe(100);\n+\t\t\texpect(resultWithInvalidCounts.nodeGraph.nodes['0'].ai_output_tokens).toBe(30);\n \t\t});\n \n \t\ttest('should prefer ai_languageModel data over metadata when both exist', () => {\n"
+ },
+ "evidence": "## fix(core): Ignore counts of tokens when provider omits input / output tokens\n\naccumulateTokenUsage added provider token counts directly, so when a provider left out input or output tokens (undefined/NaN) the accumulated tokenUsage became NaN and spread into telemetry ai_input_tokens/ai_output_tokens. It now treats any count that isn't a finite number (new or previously stored) as 0, and the parameters accept null/undefined. extractNodeTokenUsage in telemetry-helpers also ignores stored token counts that aren't finite. Added tests for both.\n\n### What changed\n- 2 source file(s), 2 test file(s), 54 changed lines\n- `packages/workflow/src/metadata-utils.ts`\n- `packages/workflow/src/telemetry-helpers.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/metadata-utils.test.ts test/telemetry-helpers.test.ts: 2 files, 131 tests passed. acdc-lint on the 4 changed files: 0 warnings, 0 errors. acdc-typecheck: no output, read as a pass (no explicit success message).\n- Type check: passes; lint: passes\n- Tests for the issue: 5/7; tests that passed before: 9/9\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (16% chance of a revert or follow-up fix, from n8n's history)\n- accumulateTokenUsage now accepts null/undefined; callers in other packages (nodes-langchain) that pass provider usage fields could use this to drop their own fallbacks, but no caller changes are needed\n- A missing count is recorded as 0 rather than 'unknown', so totals may undercount when a provider leaves one side out, which is the behaviour the issue asks for\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.21\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change handles missing/non-finite values (undefined, null, NaN) but not negative counts, which the issue's 'ignore unusable counts' intent implies; a negative value still gets added to the total instead of being ignored. The failing tests (negative count, and keeping a valid side when the other is unusable) show the unusable-count check is incomplete, and the telemetry-helpers change is also inconsistent in not guarding against non-number types or negatives.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.012050700000000001
+ }
+}

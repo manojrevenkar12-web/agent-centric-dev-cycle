@@ -1,0 +1,82 @@
+{
+ "task": "n8n-32970",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`$self` values that are expression strings (starting with `=`) are now resolved. Tests and typecheck pass, but lint did not run because the linter couldn't find its `tsgolint` binary.\n\n**Cause:** `selfGetter` in `src/workflow-data-proxy.ts` returned `selfData[name]` as is. A credential template value like `={{ ... }}` came back as the raw string instead of being evaluated. `$parameter` already resolves `=` values this way.\n\n**Fix:** `selfGetter` now evaluates `=`-prefixed string values through `workflow.expression.getParameterValue`, the same way `nodeParameterGetter` does. I pass `{}` as `selfData` for that inner call, so a value like `={{ $self.a }}` can't recurse forever.\n\n**Tests:** I added a `$self` block to `test/workflow-data-proxy.test.ts` with three cases:\n- a plain value comes back unchanged;\n- an expression-mode value is resolved;\n- a self-referencing value doesn't overflow the call stack.\n\nI did not run these three new tests against the unfixed code, so I haven't confirmed the expression-mode one fails without the change.\n\n**Verification:**\n- `acdc-test test/workflow-data-proxy.test.ts` ran 164 tests, all passing.\n- `acdc-typecheck` printed no errors.\n- `acdc-lint` failed with \"Failed to find tsgolint executable\", so the changed files are unlinted.\n\n{\"summary\": \"selfGetter in workflow-data-proxy.ts returned raw selfData values, so expression-mode ($self) values in credential templates (strings starting with '=') were never evaluated. It now resolves them via expression.getParameterValue, like $parameter does, passing empty selfData to avoid infinite recursion. Added three $self tests.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 164/164 passed. acdc-typecheck: no errors printed. acdc-lint could not run (tsgolint executable not found), so lint is unverified.\", \"tests_pass\": true, \"risks\": [\"Nested $self references inside a resolved $self value evaluate to undefined, because selfData is deliberately not passed to the inner resolution to prevent recursion.\", \"The self-referencing test only asserts the call stack doesn't overflow, not the returned value.\", \"I did not confirm the new expression-mode test fails without the fix.\", \"Lint was not run (tsgolint missing in this environment).\", \"Any selfData string starting with '=' is now evaluated, including credential values that happen to start with '='.\"]}",
+  "cost_usd": 0.1736748,
+  "turns": 27,
+  "tool_calls": 26,
+  "tests_run": 2,
+  "denials": 1,
+  "tokens_in": 316700,
+  "tokens_out": 6809,
+  "model": "claude-sonnet-5-5",
+  "seconds": 96
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 3,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 345,
+   "total": 345
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 65,
+  "reference_lines": 28,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1299305481175214,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex aa2721197..65ddce9fb 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -199,7 +199,28 @@ export class WorkflowDataProxy {\n \t\t\t\tget(_, name) {\n \t\t\t\t\tif (name === 'isProxy') return true;\n \t\t\t\t\tname = name.toString();\n-\t\t\t\t\treturn that.selfData[name];\n+\t\t\t\t\tconst value = that.selfData[name];\n+\n+\t\t\t\t\tif (typeof value === 'string' && value.charAt(0) === '=') {\n+\t\t\t\t\t\t// The value is an expression so resolve it. selfData is not passed on\n+\t\t\t\t\t\t// to avoid infinite recursion on self-referencing values.\n+\t\t\t\t\t\treturn that.workflow.expression.getParameterValue(\n+\t\t\t\t\t\t\tvalue,\n+\t\t\t\t\t\t\tthat.runExecutionData,\n+\t\t\t\t\t\t\tthat.runIndex,\n+\t\t\t\t\t\t\tthat.itemIndex,\n+\t\t\t\t\t\t\tthat.activeNodeName,\n+\t\t\t\t\t\t\tthat.connectionInputData,\n+\t\t\t\t\t\t\tthat.mode,\n+\t\t\t\t\t\t\tthat.additionalKeys,\n+\t\t\t\t\t\t\tthat.executeData,\n+\t\t\t\t\t\t\tfalse,\n+\t\t\t\t\t\t\t{},\n+\t\t\t\t\t\t\tthat.contextNodeName,\n+\t\t\t\t\t\t);\n+\t\t\t\t\t}\n+\n+\t\t\t\t\treturn value;\n \t\t\t\t},\n \t\t\t},\n \t\t);\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex cd760a907..32d61a897 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -6,6 +6,7 @@ import { ExpressionError } from '../src/errors/expression.error';\n import {\n \tNodeConnectionTypes,\n \ttype NodeConnectionType,\n+\ttype IDataObject,\n \ttype IExecuteData,\n \ttype INode,\n \ttype IPinData,\n@@ -2078,4 +2079,45 @@ describe('WorkflowDataProxy', () => {\n \t\t\texpect(proxy.$('Edit').item.json.test).toBe('1111');\n \t\t});\n \t});\n+\n+\tdescribe('$self', () => {\n+\t\tconst getSelfProxy = (selfData: IDataObject) => {\n+\t\t\tconst fixture = loadFixture('base');\n+\t\t\treturn new WorkflowDataProxy(\n+\t\t\t\tnew Workflow({\n+\t\t\t\t\tid: '123',\n+\t\t\t\t\tname: 'test workflow',\n+\t\t\t\t\tnodes: fixture.workflow.nodes,\n+\t\t\t\t\tconnections: fixture.workflow.connections,\n+\t\t\t\t\tactive: false,\n+\t\t\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\t\t}),\n+\t\t\t\tnull,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'Edit Fields',\n+\t\t\t\t[],\n+\t\t\t\t{},\n+\t\t\t\t'integrated',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t\t-1,\n+\t\t\t\tselfData,\n+\t\t\t).getDataProxy();\n+\t\t};\n+\n+\t\ttest('returns plain values as is', () => {\n+\t\t\texpect(getSelfProxy({ host: 'example.com' }).$self.host).toBe('example.com');\n+\t\t});\n+\n+\t\ttest('resolves expression-mode values', () => {\n+\t\t\tconst proxy = getSelfProxy({ host: '={{ \"ex\" + \"ample.com\" }}' });\n+\t\t\texpect(proxy.$self.host).toBe('example.com');\n+\t\t});\n+\n+\t\ttest('does not recurse infinitely on self-referencing values', () => {\n+\t\t\tconst proxy = getSelfProxy({ a: '={{ $self.a }}' });\n+\t\t\texpect(() => proxy.$self.a).not.toThrow(/call stack/);\n+\t\t});\n+\t});\n });\n"
+ },
+ "evidence": "## fix(core): Resolve expression-mode $self values in credential templates\n\nselfGetter in workflow-data-proxy.ts returned raw selfData values, so expression-mode ($self) values in credential templates (strings starting with '=') were never evaluated. It now resolves them via expression.getParameterValue, like $parameter does, passing empty selfData to avoid infinite recursion. Added three $self tests.\n\n### What changed\n- 1 source file(s), 1 test file(s), 65 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 2 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 164/164 passed. acdc-typecheck: no errors printed. acdc-lint could not run (tsgolint executable not found), so lint is unverified.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 3/3; tests that passed before: 345/345\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- Nested $self references inside a resolved $self value evaluate to undefined, because selfData is deliberately not passed to the inner resolution to prevent recursion.\n- The self-referencing test only asserts the call stack doesn't overflow, not the returned value.\n- I did not confirm the new expression-mode test fails without the fix.\n- Lint was not run (tsgolint missing in this environment).\n- Any selfData string starting with '=' is now evaluated, including credential values that happen to start with '='.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.17\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change resolves expression-mode values in the $self proxy the same way as the merged fix, using an inline check for a leading '=' instead of the isExpression helper. The engineer's check is slightly less canonical, but it behaves equivalently here and no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0100467
+ }
+}

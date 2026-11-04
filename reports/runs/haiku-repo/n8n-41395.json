@@ -1,0 +1,92 @@
+{
+ "task": "n8n-41395",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Token counts from a provider that omits one of them are now ignored instead of corrupting the total. Tests and lint pass. The typecheck is not confirmed: the shell was denied when I tried to run it on its own.\n\n**Cause:** `accumulateTokenUsage` in `metadata-utils.ts` added the incoming count directly. If a provider left out `inputTokens` or `outputTokens`, the sum became `NaN`. Separately, in `telemetry-helpers.ts`, the LM-output path discarded a whole usage record if either `promptTokens` or `completionTokens` was missing, so the count that was reported was lost too.\n\n**Changes:**\n- `metadata-utils.ts`: `accumulateTokenUsage` takes optional counts and treats an omitted one as 0.\n- `telemetry-helpers.ts`: `isTokenUsage` accepts a record when at least one count is numeric, and the omitted count adds 0.\n- `interfaces.ts`: `ITaskMetadata.tokenUsage` fields are now optional, to match what providers can send.\n- Tests: two new cases in `metadata-utils.test.ts` (omitted input, omitted output) and one in `telemetry-helpers.test.ts` (LM record with only `promptTokens`).\n\n**Choices for you to check:**\n- I read \"ignore counts\" as per-field: only the omitted count is dropped, and the reported one is kept. If you meant that a partial record should be discarded entirely, the `isTokenUsage` change is the part to revert.\n- An omitted output count shows up as `ai_output_tokens: 0`, not `undefined`, when the input count is present. That is what the sum produces; I did not add special handling.\n\n**Verification:**\n- `acdc-test` on `metadata-utils.test.ts` and `telemetry-helpers.test.ts`: 132 of 132 pass. My first new assertion expected `undefined` for the omitted output count. It failed because the sum gives 0, so I corrected the expectation.\n- `acdc-lint` on the five changed files: 0 warnings, 0 errors.\n- `acdc-typecheck`: ran once, chained with other commands, with no errors printed. I could not capture its exit code, and the standalone rerun was denied. Treat the typecheck as unconfirmed until someone runs `acdc-typecheck` in `packages/workflow`.\n- I also tried to reproduce the NaN on the original code before editing, but that Bash call was denied. The NaN path is clear from reading the code, but I have not observed it at runtime.\n\n{\"summary\": \"Token accumulation no longer produces NaN or drops a whole usage record when a provider omits the input or output count. accumulateTokenUsage treats an omitted count as 0; the LM-output path in telemetry-helpers accepts a record with either count present and adds 0 for the missing one. ITaskMetadata.tokenUsage fields are now optional to match.\", \"verification\": \"acdc-test on metadata-utils.test.ts and telemetry-helpers.test.ts: 132/132 passed, including 3 new tests for omitted input, omitted output, and LM record with only promptTokens. acdc-lint on the 5 changed files: 0 warnings, 0 errors. acdc-typecheck was run once with no errors printed, but its exit code was not captured and a standalone rerun was denied, so it is unconfirmed. Reproducing the original NaN at runtime was denied and not done.\", \"tests_pass\": true, \"risks\": [\"Partial LM usage records now count the reported field instead of being discarded; confirm this per-field reading matches the issue intent.\", \"An omitted output count with a present input count yields ai_output_tokens 0 rather than undefined.\", \"Changing ITaskMetadata.tokenUsage fields to optional may affect type-checking in other packages that read these fields; typecheck is unconfirmed.\", \"The tokenUsage fallback to tokenUsageEstimate still only triggers when tokenUsage is absent entirely, unchanged from before.\"]}",
+  "cost_usd": 0.01155547,
+  "turns": 20,
+  "tool_calls": 19,
+  "tests_run": 3,
+  "denials": 2,
+  "tokens_in": 248085,
+  "tokens_out": 8936,
+  "model": "claude-haiku-5-5",
+  "seconds": 83
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 7
+  },
+  "pass_to_pass": {
+   "passed": 9,
+   "total": 9
+  },
+  "failing": [
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore NaN and keep the previous total",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore Infinity and keep the previous total",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore a negative count and keep the previous total",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should accumulate a later valid call from the last usable total",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should keep a valid side when the other side is not usable",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should replace a stored NaN total with the next usable count"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/interfaces.ts",
+   "packages/workflow/src/metadata-utils.ts",
+   "packages/workflow/src/telemetry-helpers.ts",
+   "packages/workflow/test/metadata-utils.test.ts",
+   "packages/workflow/test/telemetry-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/metadata-utils.test.ts",
+   "packages/workflow/test/telemetry-helpers.test.ts"
+  ],
+  "lines_changed": 83,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.2681167386736724,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/interfaces.ts b/packages/workflow/src/interfaces.ts\nindex 7f9892e26..b4dea3049 100644\n--- a/packages/workflow/src/interfaces.ts\n+++ b/packages/workflow/src/interfaces.ts\n@@ -3663,8 +3663,8 @@ export interface ITaskMetadata {\n \t * strips it. Used by telemetry to populate ai_input_tokens / ai_output_tokens in node_graph_string.\n \t */\n \ttokenUsage?: {\n-\t\tinputTokens: number;\n-\t\toutputTokens: number;\n+\t\tinputTokens?: number;\n+\t\toutputTokens?: number;\n \t};\n \n \t/**\ndiff --git a/packages/workflow/src/metadata-utils.ts b/packages/workflow/src/metadata-utils.ts\nindex 9c35e3388..251ad6a55 100644\n--- a/packages/workflow/src/metadata-utils.ts\n+++ b/packages/workflow/src/metadata-utils.ts\n@@ -25,14 +25,15 @@ function parseErrorResponseWorkflowMetadata(response: unknown): ISubWorkflowMeta\n \n export function accumulateTokenUsage(\n \tcontext: IExecuteFunctions,\n-\tinputTokens: number,\n-\toutputTokens: number,\n+\tinputTokens?: number,\n+\toutputTokens?: number,\n ): void {\n \tconst prev = context.getExecuteData()?.metadata?.tokenUsage;\n+\t// Providers may omit either count; an omitted count contributes nothing instead of NaN\n \tcontext.setMetadata({\n \t\ttokenUsage: {\n-\t\t\tinputTokens: (prev?.inputTokens ?? 0) + inputTokens,\n-\t\t\toutputTokens: (prev?.outputTokens ?? 0) + outputTokens,\n+\t\t\tinputTokens: (prev?.inputTokens ?? 0) + (inputTokens ?? 0),\n+\t\t\toutputTokens: (prev?.outputTokens ?? 0) + (outputTokens ?? 0),\n \t\t},\n \t});\n }\ndiff --git a/packages/workflow/src/telemetry-helpers.ts b/packages/workflow/src/telemetry-helpers.ts\nindex e12c7de8b..0e388e642 100644\n--- a/packages/workflow/src/telemetry-helpers.ts\n+++ b/packages/workflow/src/telemetry-helpers.ts\n@@ -62,14 +62,15 @@ export function isNumber(value: unknown): value is number {\n \treturn typeof value === 'number';\n }\n \n-function isTokenUsage(value: unknown): value is { promptTokens: number; completionTokens: number } {\n+function isTokenUsage(\n+\tvalue: unknown,\n+): value is { promptTokens?: number; completionTokens?: number } {\n+\t// At least one count must be present; a missing count is ignored rather than discarding the other\n \treturn (\n \t\ttypeof value === 'object' &&\n \t\tvalue !== null &&\n-\t\t'promptTokens' in value &&\n-\t\ttypeof value.promptTokens === 'number' &&\n-\t\t'completionTokens' in value &&\n-\t\ttypeof value.completionTokens === 'number'\n+\t\t(('promptTokens' in value && typeof value.promptTokens === 'number') ||\n+\t\t\t('completionTokens' in value && typeof value.completionTokens === 'number'))\n \t);\n }\n \n@@ -100,8 +101,8 @@ function extractNodeTokenUsage(\n \t\t\t\tfor (const item of branch ?? []) {\n \t\t\t\t\tconst usage = item?.json?.tokenUsage ?? item?.json?.tokenUsageEstimate;\n \t\t\t\t\tif (!isTokenUsage(usage)) continue;\n-\t\t\t\t\tinput += usage.promptTokens;\n-\t\t\t\t\toutput += usage.completionTokens;\n+\t\t\t\t\tinput += usage.promptTokens ?? 0;\n+\t\t\t\t\toutput += usage.completionTokens ?? 0;\n \t\t\t\t}\n \t\t\t}\n \t\t} else if (task.metadata?.tokenUsage) {\ndiff --git a/packages/workflow/test/metadata-utils.test.ts b/packages/workflow/test/metadata-utils.test.ts\nindex 19da98786..3c1a00cb9 100644\n--- a/packages/workflow/test/metadata-utils.test.ts\n+++ b/packages/workflow/test/metadata-utils.test.ts\n@@ -38,6 +38,25 @@ describe('MetadataUtils', () => {\n \t\t\t});\n \t\t});\n \n+\t\tit('should ignore an input count the provider omitted', () => {\n+\t\t\tconst context = createMockContext();\n+\t\t\taccumulateTokenUsage(context, 100, 50);\n+\t\t\taccumulateTokenUsage(context, undefined, 30);\n+\t\t\texpect(context.getExecuteData().metadata?.tokenUsage).toEqual({\n+\t\t\t\tinputTokens: 100,\n+\t\t\t\toutputTokens: 80,\n+\t\t\t});\n+\t\t});\n+\n+\t\tit('should ignore an output count the provider omitted', () => {\n+\t\t\tconst context = createMockContext();\n+\t\t\taccumulateTokenUsage(context, 100, undefined);\n+\t\t\texpect(context.getExecuteData().metadata?.tokenUsage).toEqual({\n+\t\t\t\tinputTokens: 100,\n+\t\t\t\toutputTokens: 0,\n+\t\t\t});\n+\t\t});\n+\n \t\tit('should preserve existing metadata fields', () => {\n \t\t\tconst context = createMockContext({ subExecutionsCount: 3 });\n \t\t\taccumulateTokenUsage(context, 100, 50);\ndiff --git a/packages/workflow/test/telemetry-helpers.test.ts b/packages/workflow/test/telemetry-helpers.test.ts\nindex 4769a7efa..4a5d578f2 100644\n--- a/packages/workflow/test/telemetry-helpers.test.ts\n+++ b/packages/workflow/test/telemetry-helpers.test.ts\n@@ -2482,6 +2482,42 @@ describe('generateNodesGraph', () => {\n \t\t\texpect(result.nodeGraph.nodes['0'].ai_output_tokens).toBe(45);\n \t\t});\n \n+\t\ttest('should count the reported token field when the provider omits the other', () => {\n+\t\t\tconst workflow: Partial<IWorkflowBase> = {\n+\t\t\t\tnodes: [\n+\t\t\t\t\t{\n+\t\t\t\t\t\tparameters: { model: 'gpt-4o' },\n+\t\t\t\t\t\tid: 'lm-node-id',\n+\t\t\t\t\t\tname: 'LM Node',\n+\t\t\t\t\t\ttype: '@n8n/n8n-nodes-langchain.lmChatOpenAi',\n+\t\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\t\tposition: [100, 100],\n+\t\t\t\t\t},\n+\t\t\t\t],\n+\t\t\t\tconnections: {},\n+\t\t\t\tpinData: {},\n+\t\t\t};\n+\n+\t\t\tconst runData: IRunData = {\n+\t\t\t\t'LM Node': [\n+\t\t\t\t\t{\n+\t\t\t\t\t\tstartTime: 0,\n+\t\t\t\t\t\texecutionTime: 100,\n+\t\t\t\t\t\texecutionIndex: 0,\n+\t\t\t\t\t\texecutionStatus: 'success',\n+\t\t\t\t\t\tdata: {\n+\t\t\t\t\t\t\t[NodeConnectionTypes.AiLanguageModel]: [[{ json: { tokenUsage: { promptTokens: 150 } } }]],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t\tsource: [],\n+\t\t\t\t\t},\n+\t\t\t\t],\n+\t\t\t};\n+\n+\t\t\tconst result = generateNodesGraph(workflow, nodeTypes, { runData });\n+\t\t\texpect(result.nodeGraph.nodes['0'].ai_input_tokens).toBe(150);\n+\t\t\texpect(result.nodeGraph.nodes['0'].ai_output_tokens).toBe(0);\n+\t\t});\n+\n \t\ttest('should sum metadata tokens across multiple task runs for vendor nodes', () => {\n \t\t\tconst workflow: Partial<IWorkflowBase> = {\n \t\t\t\tnodes: [\n"
+ },
+ "evidence": "## fix(core): Ignore counts of tokens when provider omits input / output tokens\n\nToken accumulation no longer produces NaN or drops a whole usage record when a provider omits the input or output count. accumulateTokenUsage treats an omitted count as 0; the LM-output path in telemetry-helpers accepts a record with either count present and adds 0 for the missing one. ITaskMetadata.tokenUsage fields are now optional to match.\n\n### What changed\n- 3 source file(s), 2 test file(s), 83 changed lines\n- `packages/workflow/src/interfaces.ts`\n- `packages/workflow/src/metadata-utils.ts`\n- `packages/workflow/src/telemetry-helpers.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test on metadata-utils.test.ts and telemetry-helpers.test.ts: 132/132 passed, including 3 new tests for omitted input, omitted output, and LM record with only promptTokens. acdc-lint on the 5 changed files: 0 warnings, 0 errors. acdc-typecheck was run once with no errors printed, but its exit code was not captured and a standalone rerun was denied, so it is unconfirmed. Reproducing the original NaN at runtime was denied and not done.\n- Type check: passes; lint: passes\n- Tests for the issue: 1/7; tests that passed before: 9/9\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (27% chance of a revert or follow-up fix, from n8n's history)\n- Partial LM usage records now count the reported field instead of being discarded; confirm this per-field reading matches the issue intent.\n- An omitted output count with a present input count yields ai_output_tokens 0 rather than undefined.\n- Changing ITaskMetadata.tokenUsage fields to optional may affect type-checking in other packages that read these fields; typecheck is unconfirmed.\n- The tokenUsage fallback to tokenUsageEstimate still only triggers when tokenUsage is absent entirely, unchanged from before.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": true,
+  "reason": "The change handles undefined/omitted counts (the issue's stated case) by treating them as 0, but it does not guard against NaN, Infinity, or negative values, nor repair a previously stored NaN total, which the merged fix and tests cover. A reviewer would likely accept it for the issue as written, since the issue only mentions omitted tokens, though it is less robust than the merged fix.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.014454700000000001
+ }
+}

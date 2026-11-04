@@ -1,0 +1,83 @@
+{
+ "task": "n8n-41079",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Native evaluation now charges array `includes`, `indexOf` and `lastIndexOf` calls by the receiver's content size, not just its length.\n\n**Cause:** these methods compare every element against the argument, and comparing strings costs their length. `evalCall` only charged `preflightSize`, which is the array's element count. A callback loop over a long-string array was therefore nearly free against the work budget.\n\n**Fix:** in `evaluator.ts`, a new `COMPARES_ELEMENTS` set and `comparisonWeight()` charge `contentWeight(receiver)` for those three methods. A receiver whose content is over `MAX_RESULT_LENGTH` falls back to the engine, as `evalExtension` already does.\n\n**Test:** a new parity test, \"array comparison methods are charged by element content\", covers all three methods. A loop with enough visits to exhaust `MAX_WORK` now hands off, and a short loop stays native. I did not run the test against the unfixed code, so I haven't confirmed it fails without the change.\n\n**Verification:** `acdc-test test/native-evaluation-parity.test.ts` passed (2 files, 918 tests). `acdc-lint` on both changed files reported 0 warnings and 0 errors. `acdc-typecheck` printed nothing, which I took to mean it passed.\n\n{\"summary\": \"Charge the receiver's content weight against the native evaluation work budget for array includes/indexOf/lastIndexOf, which compare every element but were only charged by element count. Added a parity test.\", \"verification\": \"acdc-test test/native-evaluation-parity.test.ts: 2 files, 918 tests passed. acdc-lint on the two changed files: 0 warnings, 0 errors. acdc-typecheck printed no output, taken as passing. I did not run the new test against the unfixed code.\", \"tests_pass\": true, \"risks\": [\"Large string arrays (content over MAX_RESULT_LENGTH) now fall back to the engine for these methods, where they were handled natively before.\", \"The charge uses contentWeight, which counts the whole receiver, not the early-exit cost of an actual match. This is a deliberately conservative upper bound.\", \"The new test's thresholds depend on MAX_WORK and MAX_RESULT_LENGTH.\"]}",
+  "cost_usd": 0.15633940000000002,
+  "turns": 14,
+  "tool_calls": 13,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 151018,
+  "tokens_out": 4150,
+  "model": "claude-sonnet-5-5",
+  "seconds": 89
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 458,
+   "total": 458
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards element-comparing methods are charged by element content"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 28,
+  "reference_lines": 30,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1782085080318342,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 6883c56c6..f8f97b03e 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -346,6 +346,19 @@ function assertConcatWeight(receiver: unknown[], args: unknown[]): void {\n \tif (weight > MAX_RESULT_LENGTH) throw new EngineFallbackError();\n }\n \n+/**\n+ * Array methods that compare every element against an argument. Comparing\n+ * strings costs their length, so element count under-charges: the receiver's\n+ * content is the work, like an extension call.\n+ */\n+const COMPARES_ELEMENTS = new Set(['includes', 'indexOf', 'lastIndexOf']);\n+\n+function comparisonWeight(receiver: unknown[]): number {\n+\tconst weight = contentWeight(receiver, MAX_RESULT_LENGTH);\n+\tif (weight > MAX_RESULT_LENGTH) throw new EngineFallbackError();\n+\treturn weight;\n+}\n+\n function evalReceiver(\n \tnode: Extract<SimpleNode, { kind: 'call' | 'iterate' }>,\n \tenv: Env,\n@@ -391,6 +404,9 @@ function evalCall(node: Extract<SimpleNode, { kind: 'call' }>, env: Env): unknow\n \t\tif (node.method === 'concat') assertConcatWeight(receiver, args);\n \t}\n \tenv.charge(preflightSize(receiver, node.method, args));\n+\tif (isArray(receiver) && COMPARES_ELEMENTS.has(node.method)) {\n+\t\tenv.charge(comparisonWeight(receiver));\n+\t}\n \n \treturn bounded(method.apply(receiver, args));\n }\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex 40cb5da55..2bafc561a 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -642,6 +642,18 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\t).toEqual({ handled: false });\n \t\t});\n \n+\t\ttest('array comparison methods are charged by element content', () => {\n+\t\t\tconst hay = ['x'.repeat(MAX_RESULT_LENGTH - 10)];\n+\t\t\tconst visits = Math.ceil(MAX_WORK / MAX_RESULT_LENGTH) + 1;\n+\t\t\tconst few = new Array<string>(2).fill('y');\n+\t\t\tconst many = new Array<string>(visits).fill('y');\n+\t\t\tfor (const method of ['includes', 'indexOf', 'lastIndexOf']) {\n+\t\t\t\tconst expression = `{{ $json.many.some(n => $json.hay.${method}(n) === 7) }}`;\n+\t\t\t\texpect(nativeOn(expression, { $json: { many, hay } })).toEqual({ handled: false });\n+\t\t\t\texpect(nativeOn(expression, { $json: { many: few, hay } }).handled).toBe(true);\n+\t\t\t}\n+\t\t});\n+\n \t\t// A `$parameter` read resolves a nested expression in its own evaluation,\n \t\t// with its own budgets. Read once per evaluation (as the vm bridge does),\n \t\t// a body cannot resolve it once per element.\n"
+ },
+ "evidence": "## fix(core): Charge element content for comparing array methods in native evaluation (no-changelog)\n\nCharge the receiver's content weight against the native evaluation work budget for array includes/indexOf/lastIndexOf, which compare every element but were only charged by element count. Added a parity test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 28 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/native-evaluation-parity.test.ts: 2 files, 918 tests passed. acdc-lint on the two changed files: 0 warnings, 0 errors. acdc-typecheck printed no output, taken as passing. I did not run the new test against the unfixed code.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 458/458\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- Large string arrays (content over MAX_RESULT_LENGTH) now fall back to the engine for these methods, where they were handled natively before.\n- The charge uses contentWeight, which counts the whole receiver, not the early-exit cost of an actual match. This is a deliberately conservative upper bound.\n- The new test's thresholds depend on MAX_WORK and MAX_RESULT_LENGTH.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.16\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change charges content for includes/indexOf/lastIndexOf but omits toSorted, which stringifies both operands on every comparison and whose work scales with content times log n. The issue's 'comparing array methods' covers toSorted, so the hidden test for element-comparing methods fails; it also throws a fallback error instead of charging, and counts nested content differently from the reference.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0131307
+ }
+}

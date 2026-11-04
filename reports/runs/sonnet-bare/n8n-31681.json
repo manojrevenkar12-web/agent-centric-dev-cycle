@@ -1,0 +1,85 @@
+{
+ "task": "n8n-31681",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`getNodeParameters` no longer strips the leading `=` from `$fromAI` placeholders on fields with `noDataExpression: true`. The fix is in `src/node-helpers.ts`. `test/node-helpers.test.ts` passes, 185 of 185, including the new test for this case. The typecheck printed nothing, which I read as clean. The lint run failed on a tooling problem and checked nothing.\n\n**Cause:** `getNodeParameters` removed the `=` prefix from every expression on a `noDataExpression` field. That turned `={{ $fromAI(...) }}` into plain text, so the placeholder was never resolved.\n\n**Fix:** the stripping now skips any value containing `$fromAI(`. It uses a case-insensitive regex, matching the pattern in `from-ai-parse-utils.ts`. Other expressions on these fields are still stripped as before.\n\n**Test:** I added \"should keep $fromAI placeholders intact when noDataExpression is true\" next to the existing `noDataExpression` tests. It failed before the fix and passes after.\n\n**Lint:** `acdc-lint` reported \"Failed to find tsgolint executable\", so my change hasn't been linted.\n\n{\"summary\": \"getNodeParameters stripped the leading '=' from every expression on noDataExpression fields, which broke $fromAI placeholders. It now skips values containing $fromAI(, so they stay intact. Other expressions are still stripped. Added a regression test.\", \"verification\": \"acdc-test test/node-helpers.test.ts: 185/185 pass, and the new test failed before the fix. acdc-typecheck printed nothing, read as clean. acdc-lint could not run (tsgolint executable not found), so lint is unchecked.\", \"tests_pass\": true, \"risks\": [\"The check is a regex on the string, so any value that mentions $fromAI( anywhere, even in a mixed expression, keeps its '=' prefix.\", \"Lint was not run because the lint tool failed to start.\", \"I only ran node-helpers.test.ts, not the rest of the package's tests.\"]}",
+  "cost_usd": 0.09845080000000002,
+  "turns": 15,
+  "tool_calls": 14,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 149131,
+  "tokens_out": 4223,
+  "model": "claude-sonnet-5-5",
+  "seconds": 79
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 2,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 326,
+   "total": 328
+  },
+  "failing": [
+   "packages/workflow/test/node-helpers.test.ts :: NodeHelpers getNodeParameters - noDataExpression handling $fromAI placeholder carve-out still strips $fromAI() concatenated with another expression",
+   "packages/workflow/test/node-helpers.test.ts :: NodeHelpers getNodeParameters - noDataExpression handling $fromAI placeholder carve-out still strips $fromAI() with an interpolated value in its argument"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 42,
+  "reference_lines": 4,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1848414567946126,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex 20b2f2606..f5489f73c 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -823,7 +823,8 @@ export function getNodeParameters(\n \t\t\t// Strip expression prefix if noDataExpression is true\n \t\t\tif (nodeProperties.noDataExpression && nodeParameters[nodeProperties.name] !== undefined) {\n \t\t\t\tconst value = nodeParameters[nodeProperties.name];\n-\t\t\t\tif (isExpression(value)) {\n+\t\t\t\t// Keep $fromAI placeholders intact so the AI can still fill the field\n+\t\t\t\tif (isExpression(value) && !/\\$fromAI\\s*\\(/i.test(value)) {\n \t\t\t\t\tnodeParameters[nodeProperties.name] = value.slice(1);\n \t\t\t\t\tnodeParametersFull[nodeProperties.name] = nodeParameters[nodeProperties.name];\n \t\t\t\t}\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex cc7fa7f93..3e7f98fa8 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -6576,6 +6576,45 @@ describe('NodeHelpers', () => {\n \t\t\texpect(result?.resource).toBe('users');\n \t\t});\n \n+\t\tit('should keep $fromAI placeholders intact when noDataExpression is true', () => {\n+\t\t\tconst properties: INodeProperties[] = [\n+\t\t\t\t{\n+\t\t\t\t\tname: 'resource',\n+\t\t\t\t\tdisplayName: 'Resource',\n+\t\t\t\t\ttype: 'string',\n+\t\t\t\t\tdefault: '',\n+\t\t\t\t\tnoDataExpression: true,\n+\t\t\t\t},\n+\t\t\t];\n+\t\t\tconst nodeValues: Record<string, string> = {\n+\t\t\t\tresource: \"={{ $fromAI('resource', '', 'string') }}\",\n+\t\t\t};\n+\t\t\tconst node: INode = {\n+\t\t\t\tid: 'test-123',\n+\t\t\t\tname: 'Test',\n+\t\t\t\ttype: 'n8n-nodes-base.test',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\tposition: [0, 0],\n+\t\t\t\tparameters: nodeValues,\n+\t\t\t\tcredentials: {},\n+\t\t\t};\n+\t\t\tconst description: INodeTypeDescription = {\n+\t\t\t\tname: 'Test',\n+\t\t\t\tdisplayName: 'Test',\n+\t\t\t\tgroup: [],\n+\t\t\t\tversion: 1,\n+\t\t\t\tdescription: 'Test',\n+\t\t\t\tdefaults: {},\n+\t\t\t\tinputs: [],\n+\t\t\t\toutputs: [],\n+\t\t\t\tproperties,\n+\t\t\t};\n+\n+\t\t\tconst result = getNodeParameters(properties, nodeValues, true, false, node, description);\n+\n+\t\t\texpect(result?.resource).toBe(\"={{ $fromAI('resource', '', 'string') }}\");\n+\t\t});\n+\n \t\tit('should not strip expression prefix when noDataExpression is false', () => {\n \t\t\tconst nodePropertiesArray: INodeProperties[] = [\n \t\t\t\t{\n"
+ },
+ "evidence": "## fix(core): Keep $fromAI placeholders intact on fields with expressions disabled\n\ngetNodeParameters stripped the leading '=' from every expression on noDataExpression fields, which broke $fromAI placeholders. It now skips values containing $fromAI(, so they stay intact. Other expressions are still stripped. Added a regression test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 42 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test test/node-helpers.test.ts: 185/185 pass, and the new test failed before the fix. acdc-typecheck printed nothing, read as clean. acdc-lint could not run (tsgolint executable not found), so lint is unchecked.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 2/2; tests that passed before: 326/328\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- The check is a regex on the string, so any value that mentions $fromAI( anywhere, even in a mixed expression, keeps its '=' prefix.\n- Lint was not run because the lint tool failed to start.\n- I only ran node-helpers.test.ts, not the rest of the package's tests.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.10\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The regex skips stripping the '=' for any value containing $fromAI(, including ones concatenated with other expressions or with interpolated arguments. The issue and merged fix only preserve a lone $fromAI() placeholder (isFromAIOnlyExpression), so mixed expressions should still be stripped, and the engineer's change leaves them with an unwanted '='.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0099547
+ }
+}

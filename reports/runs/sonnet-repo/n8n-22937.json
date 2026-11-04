@@ -1,0 +1,82 @@
+{
+ "task": "n8n-22937",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Tests pass and typecheck printed nothing (clean); lint couldn't run (tool missing).\n\nNegative numbers in JS-object-style strings, such as `{a: -1}`, now parse correctly when `acceptJSObject` is set. The cause was that esprima parses `-1` as a `UnaryExpression`, and `syntaxNodeToValue` in `packages/workflow/src/utils.ts` had no case for it. It returned `undefined`.\n\nI added a `UnaryExpression` case that handles `-` and `+` on numeric operands and returns `undefined` for anything else. I also added a test in `packages/workflow/test/utils.test.ts` covering negative numbers at top level, in arrays, in nested objects and as decimals.\n\n`acdc-test` on `utils.test.ts` passed all 111 tests. `acdc-typecheck` printed nothing, which I took as clean. `acdc-lint` failed to run because the `oxlint-tsgolint` executable wasn't found, so the change is unlinted.\n\n{\"summary\": \"Added UnaryExpression handling (+/- on numeric literals) to syntaxNodeToValue in packages/workflow/src/utils.ts so negative numbers parse in JS-object-style strings via jsonParse with acceptJSObject; added a test.\", \"verification\": \"acdc-test packages/workflow/test/utils.test.ts: 111 passed. acdc-typecheck: no output (clean). acdc-lint could not run (tsgolint executable not found).\", \"tests_pass\": true, \"risks\": [\"Lint was not run because the tool is missing in this environment.\", \"Other unary operators (!, ~, typeof) and non-numeric operands still return undefined, as before.\"]}",
+  "cost_usd": 0.0639924,
+  "turns": 11,
+  "tool_calls": 10,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 99666,
+  "tokens_out": 2473,
+  "model": "claude-sonnet-5-5",
+  "seconds": 55
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 3,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 208,
+   "total": 208
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/utils.ts",
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "lines_changed": 15,
+  "reference_lines": 7,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.15049075419653166,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/utils.ts b/packages/workflow/src/utils.ts\nindex 5890db241..b050b3e2b 100644\n--- a/packages/workflow/src/utils.ts\n+++ b/packages/workflow/src/utils.ts\n@@ -85,6 +85,13 @@ function syntaxNodeToValue(expression?: SyntaxNode | null): unknown {\n \t\t\treturn expression.name;\n \t\tcase Syntax.Literal:\n \t\t\treturn expression.value;\n+\t\tcase Syntax.UnaryExpression: {\n+\t\t\tconst argument = syntaxNodeToValue(expression.argument);\n+\t\t\tif (typeof argument !== 'number') return undefined;\n+\t\t\tif (expression.operator === '-') return -argument;\n+\t\t\tif (expression.operator === '+') return argument;\n+\t\t\treturn undefined;\n+\t\t}\n \t\tcase Syntax.ArrayExpression:\n \t\t\treturn expression.elements.map((exp) => syntaxNodeToValue(exp));\n \t\tdefault:\ndiff --git a/packages/workflow/test/utils.test.ts b/packages/workflow/test/utils.test.ts\nindex 778d0d03f..01abbe3dc 100644\n--- a/packages/workflow/test/utils.test.ts\n+++ b/packages/workflow/test/utils.test.ts\n@@ -95,6 +95,14 @@ describe('isObjectEmpty', () => {\n });\n \n describe('jsonParse', () => {\n+\tit('parses negative numbers when acceptJSObject is set', () => {\n+\t\texpect(jsonParse(\"{a: -1, 'b': [-2.5, 3], c: {d: -4}}\", { acceptJSObject: true })).toEqual({\n+\t\t\ta: -1,\n+\t\t\tb: [-2.5, 3],\n+\t\t\tc: { d: -4 },\n+\t\t});\n+\t});\n+\n \tit('parses JSON', () => {\n \t\texpect(jsonParse('[1, 2, 3]')).toEqual([1, 2, 3]);\n \t\texpect(jsonParse('{ \"a\": 1 }')).toEqual({ a: 1 });\n"
+ },
+ "evidence": "## fix: Allow negative numbers when parsing objects from string\n\nAdded UnaryExpression handling (+/- on numeric literals) to syntaxNodeToValue in packages/workflow/src/utils.ts so negative numbers parse in JS-object-style strings via jsonParse with acceptJSObject; added a test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 15 changed lines\n- `packages/workflow/src/utils.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test packages/workflow/test/utils.test.ts: 111 passed. acdc-typecheck: no output (clean). acdc-lint could not run (tsgolint executable not found).\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 3/3; tests that passed before: 208/208\n\n### Risks that remain\n- Change risk: medium (15% chance of a revert or follow-up fix, from n8n's history)\n- Lint was not run because the tool is missing in this environment.\n- Other unary operators (!, ~, typeof) and non-numeric operands still return undefined, as before.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.06\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change adds UnaryExpression handling that negates numeric arguments, which fixes negative numbers when parsing objects from strings, and no hidden tests fail. It differs from the merged fix only on edge cases: it returns undefined for non-numeric arguments or other operators like '!', where the merged fix returns the inner value, and it also supports unary '+'. These are arguably more correct.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0081067
+ }
+}

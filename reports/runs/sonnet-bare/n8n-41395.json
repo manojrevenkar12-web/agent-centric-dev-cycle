@@ -1,0 +1,85 @@
+{
+ "task": "n8n-41395",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`accumulateTokenUsage` now ignores token counts that a provider omits. Tests and lint pass. The typecheck printed nothing, and I read that as clean.\n\n**Cause:** `accumulateTokenUsage` in `packages/workflow/src/metadata-utils.ts` added the counts to the running total without checking them. If a provider left out the input or output count, the stored total became `NaN`.\n\n**Fix:**\n- A count that is missing, null, `NaN` or not finite now counts as 0.\n- If both counts are missing, nothing is written to the metadata.\n- The parameters are now typed `number | null | undefined`.\n\n**Tests:** I added two cases to `packages/workflow/test/metadata-utils.test.ts`. One checks that a missing or invalid count is skipped while the other count is still added. The other checks that no `tokenUsage` is set when both counts are missing.\n\n**Assumption:** The issue wording was ambiguous, and I took it to mean the `accumulateTokenUsage` helper. I couldn't see its callers, since only `packages/workflow` is checked out. I left `extractNodeTokenUsage` in `telemetry-helpers.ts` alone. It already treats missing metadata counts as 0. For the `promptTokens`/`completionTokens` shape it skips the item unless both counts are numbers. If the issue meant that stricter skip, it needs a separate change.\n\n{\"summary\": \"accumulateTokenUsage now treats missing/null/non-finite input or output token counts as 0 and skips writing metadata when both are absent, instead of producing NaN totals. Added tests for both cases.\", \"verification\": \"acdc-test on test/metadata-utils.test.ts: 11 passed. An earlier run of telemetry-helpers.test.ts plus the metadata test file passed 120 tests, but metadata-utils.test.ts had a syntax error from my edit at that point and was not run. I fixed it and did not rerun telemetry-helpers.test.ts afterwards. acdc-lint on the two changed files: 0 warnings, 0 errors. acdc-typecheck printed nothing, which I took as clean.\", \"tests_pass\": true, \"risks\": [\"I interpreted the issue as being about accumulateTokenUsage and could not see its callers, since only packages/workflow is checked out\", \"The extractNodeTokenUsage path in telemetry-helpers.ts still skips an item entirely when either promptTokens or completionTokens is missing, and I did not change that\", \"When both counts are missing, no metadata is set at all, where before it was set to NaN\"]}",
+  "cost_usd": 0.1409094,
+  "turns": 20,
+  "tool_calls": 19,
+  "tests_run": 5,
+  "denials": 1,
+  "tokens_in": 260390,
+  "tokens_out": 5622,
+  "model": "claude-sonnet-5-5",
+  "seconds": 128
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 4,
+   "total": 7
+  },
+  "pass_to_pass": {
+   "passed": 9,
+   "total": 9
+  },
+  "failing": [
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should ignore a negative count and keep the previous total",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should keep a valid side when the other side is not usable",
+   "packages/workflow/test/metadata-utils.test.ts :: MetadataUtils accumulateTokenUsage should replace a stored NaN total with the next usable count"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/metadata-utils.ts",
+   "packages/workflow/test/metadata-utils.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/metadata-utils.test.ts"
+  ],
+  "lines_changed": 31,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.14464409734338232,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/metadata-utils.ts b/packages/workflow/src/metadata-utils.ts\nindex 9c35e3388..cb74cf839 100644\n--- a/packages/workflow/src/metadata-utils.ts\n+++ b/packages/workflow/src/metadata-utils.ts\n@@ -25,14 +25,20 @@ function parseErrorResponseWorkflowMetadata(response: unknown): ISubWorkflowMeta\n \n export function accumulateTokenUsage(\n \tcontext: IExecuteFunctions,\n-\tinputTokens: number,\n-\toutputTokens: number,\n+\tinputTokens?: number | null,\n+\toutputTokens?: number | null,\n ): void {\n+\t// Providers may omit token counts; ignore missing/invalid values instead of producing NaN\n+\tconst input = typeof inputTokens === 'number' && Number.isFinite(inputTokens) ? inputTokens : 0;\n+\tconst output =\n+\t\ttypeof outputTokens === 'number' && Number.isFinite(outputTokens) ? outputTokens : 0;\n+\tif (input === 0 && output === 0) return;\n+\n \tconst prev = context.getExecuteData()?.metadata?.tokenUsage;\n \tcontext.setMetadata({\n \t\ttokenUsage: {\n-\t\t\tinputTokens: (prev?.inputTokens ?? 0) + inputTokens,\n-\t\t\toutputTokens: (prev?.outputTokens ?? 0) + outputTokens,\n+\t\t\tinputTokens: (prev?.inputTokens ?? 0) + input,\n+\t\t\toutputTokens: (prev?.outputTokens ?? 0) + output,\n \t\t},\n \t});\n }\ndiff --git a/packages/workflow/test/metadata-utils.test.ts b/packages/workflow/test/metadata-utils.test.ts\nindex 19da98786..e67bcaefc 100644\n--- a/packages/workflow/test/metadata-utils.test.ts\n+++ b/packages/workflow/test/metadata-utils.test.ts\n@@ -45,6 +45,23 @@ describe('MetadataUtils', () => {\n \t\t\texpect(metadata?.subExecutionsCount).toBe(3);\n \t\t\texpect(metadata?.tokenUsage).toEqual({ inputTokens: 100, outputTokens: 50 });\n \t\t});\n+\n+\t\tit('should ignore missing counts instead of producing NaN', () => {\n+\t\t\tconst context = createMockContext();\n+\t\t\taccumulateTokenUsage(context, 100, undefined);\n+\t\t\taccumulateTokenUsage(context, undefined, 20);\n+\t\t\taccumulateTokenUsage(context, NaN, null);\n+\t\t\texpect(context.getExecuteData().metadata?.tokenUsage).toEqual({\n+\t\t\t\tinputTokens: 100,\n+\t\t\t\toutputTokens: 20,\n+\t\t\t});\n+\t\t});\n+\n+\t\tit('should not set metadata when provider omits both counts', () => {\n+\t\t\tconst context = createMockContext();\n+\t\t\taccumulateTokenUsage(context, undefined, undefined);\n+\t\t\texpect(context.getExecuteData().metadata?.tokenUsage).toBeUndefined();\n+\t\t});\n \t});\n \n \tdescribe('parseMetadataFromError', () => {\n"
+ },
+ "evidence": "## fix(core): Ignore counts of tokens when provider omits input / output tokens\n\naccumulateTokenUsage now treats missing/null/non-finite input or output token counts as 0 and skips writing metadata when both are absent, instead of producing NaN totals. Added tests for both cases.\n\n### What changed\n- 1 source file(s), 1 test file(s), 31 changed lines\n- `packages/workflow/src/metadata-utils.ts`\n\n### What ran\n- The agent ran the tests 5 time(s) and says: acdc-test on test/metadata-utils.test.ts: 11 passed. An earlier run of telemetry-helpers.test.ts plus the metadata test file passed 120 tests, but metadata-utils.test.ts had a syntax error from my edit at that point and was not run. I fixed it and did not rerun telemetry-helpers.test.ts afterwards. acdc-lint on the two changed files: 0 warnings, 0 errors. acdc-typecheck printed nothing, which I took as clean.\n- Type check: passes; lint: passes\n- Tests for the issue: 4/7; tests that passed before: 9/9\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (14% chance of a revert or follow-up fix, from n8n's history)\n- I interpreted the issue as being about accumulateTokenUsage and could not see its callers, since only packages/workflow is checked out\n- The extractNodeTokenUsage path in telemetry-helpers.ts still skips an item entirely when either promptTokens or completionTokens is missing, and I did not change that\n- When both counts are missing, no metadata is set at all, where before it was set to NaN\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.14\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change handles undefined/null/NaN/Infinity on the incoming counts, but it does not treat negative values as unusable, and it does not sanitize the previously stored totals, so a stored NaN persists and poisons later sums. The early return when both counts are zero also leaves a bad stored total unrepaired, so the fix only covers part of the omitted-token problem.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0105307
+ }
+}

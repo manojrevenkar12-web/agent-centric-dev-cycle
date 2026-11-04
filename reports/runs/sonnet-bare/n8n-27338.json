@@ -1,0 +1,82 @@
+{
+ "task": "n8n-27338",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`$('Node').item` now resolves in a partial execution. The workflow-data-proxy tests pass (146/146), but I didn't confirm that the new test fails without the fix. Lint and typecheck gave no usable result.\n\nI inferred the cause from the code and didn't reproduce it in a real partial run. In a partial execution the active node hasn't run, so its input data is empty. `.item` looks up the active node's input item to follow `pairedItem`. With no input item it threw \"Some intermediate nodes … have not executed yet\". Pinned data already had a shortcut for this case, but ordinary run data from an executed node did not.\n\nThe fix is in `src/workflow-data-proxy.ts`. In the empty-input branch, after the pinned-data check, I added a fallback. If the referenced node has run data, it returns that node's item at the current item index. It reads from the output branch connected to the active node.\n\nI added a test in `test/workflow-data-proxy.test.ts` using the `base` fixture with the `End` node's run data removed. It checks that `$('Rename').item` resolves, and that `$('Set').item` on a node that hasn't run still throws.\n\n- **Typecheck:** `acdc-typecheck` reports one error, in `src/expression.ts(218)` (`'bridge'` not in `EvaluatorConfig`). I didn't touch that file, and I didn't check whether it also fails on a clean checkout.\n- **Lint:** `acdc-lint` couldn't run because it failed to find the `tsgolint` executable.\n\n{\"summary\": \"In partial executions the active node has no input data, so $().item threw 'intermediate nodes have not executed'. Added a fallback in workflow-data-proxy.ts, after the pinned-data check: if the referenced node has run data, return its item at the current item index (from the output branch connected to the active node). Added tests for resolving and for an unexecuted node still throwing.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 146 passed. acdc-typecheck reports one error in src/expression.ts(218) ('bridge' not in EvaluatorConfig), a file I did not touch; not checked on a clean checkout. acdc-lint could not run (tsgolint executable missing). Did not confirm the new test fails without the fix.\", \"tests_pass\": true, \"risks\": [\"The fallback assumes a 1:1 item index mapping between the referenced node's output and the current item, like the existing pinned-data shortcut; it does not follow pairedItem chains, so results may differ from a full execution when item counts change between the nodes.\", \"The cause was inferred from the code and not reproduced in a real partial run (no integration environment here).\", \"Run data is read with the default run index, so multi-run nodes use the current run index behavior.\", \"Typecheck error in expression.ts and the lint tool failure are unrelated to this change but were not resolved.\"]}",
+  "cost_usd": 0.19264830000000002,
+  "turns": 16,
+  "tool_calls": 15,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 288551,
+  "tokens_out": 5516,
+  "model": "claude-sonnet-5-5",
+  "seconds": 116
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 311,
+   "total": 311
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 26,
+  "reference_lines": 18,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.18476663329261106,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex 1e70d6d93..08d35d5f0 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -1229,6 +1229,18 @@ export class WorkflowDataProxy {\n \t\t\t\t\t\t\t\t\t\tif (pinnedData) {\n \t\t\t\t\t\t\t\t\t\t\treturn that.returnExecutionData(pinnedData[itemIndex], resolveFullItem);\n \t\t\t\t\t\t\t\t\t\t}\n+\n+\t\t\t\t\t\t\t\t\t\t// Partial execution: the active node has no input data yet (it has not\n+\t\t\t\t\t\t\t\t\t\t// run), but the referenced node already has run data. Resolve from it.\n+\t\t\t\t\t\t\t\t\t\tif (that.runExecutionData?.resultData?.runData?.[nodeName]) {\n+\t\t\t\t\t\t\t\t\t\t\tconst branchIndex =\n+\t\t\t\t\t\t\t\t\t\t\t\tthat.workflow.getNodeConnectionIndexes(that.activeNodeName, nodeName)\n+\t\t\t\t\t\t\t\t\t\t\t\t\t?.sourceIndex ?? 0;\n+\t\t\t\t\t\t\t\t\t\t\tconst nodeData = that.getNodeExecutionData(nodeName, false, branchIndex);\n+\t\t\t\t\t\t\t\t\t\t\tif (nodeData[itemIndex]) {\n+\t\t\t\t\t\t\t\t\t\t\t\treturn that.returnExecutionData(nodeData[itemIndex], resolveFullItem);\n+\t\t\t\t\t\t\t\t\t\t\t}\n+\t\t\t\t\t\t\t\t\t\t}\n \t\t\t\t\t\t\t\t\t}\n \n \t\t\t\t\t\t\t\t\tconst executionData = that.connectionInputData;\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex 4cac88b2c..e825a6657 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -503,6 +503,20 @@ describe('WorkflowDataProxy', () => {\n \t\t\texpect(() => proxy.$('Set').item).toThrowError(ExpressionError);\n \t\t});\n \n+\t\tdescribe('partial execution (active node has no input data yet)', () => {\n+\t\t\tconst partialRun = structuredClone(fixture.run);\n+\t\t\tdelete partialRun.data.resultData.runData.End;\n+\t\t\tconst partialProxy = getProxyFromFixture(fixture.workflow, partialRun, 'End');\n+\n+\t\t\ttest('$(\"NodeName\").item resolves from executed node data', () => {\n+\t\t\t\texpect(partialProxy.$('Rename').item.json).toEqual({ data: 105 });\n+\t\t\t});\n+\n+\t\t\ttest('$(\"NodeName\").item on node that has not executed still throws', () => {\n+\t\t\t\texpect(() => partialProxy.$('Set').item).toThrowError(ExpressionError);\n+\t\t\t});\n+\t\t});\n+\n \t\ttest('$(\"NodeName\").isExecuted', () => {\n \t\t\texpect(proxy.$('Function').isExecuted).toEqual(true);\n \t\t\texpect(proxy.$('Set').isExecuted).toEqual(false);\n"
+ },
+ "evidence": "## fix(core): Resolve $().item expressions in partial executions\n\nIn partial executions the active node has no input data, so $().item threw 'intermediate nodes have not executed'. Added a fallback in workflow-data-proxy.ts, after the pinned-data check: if the referenced node has run data, return its item at the current item index (from the output branch connected to the active node). Added tests for resolving and for an unexecuted node still throwing.\n\n### What changed\n- 1 source file(s), 1 test file(s), 26 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 146 passed. acdc-typecheck reports one error in src/expression.ts(218) ('bridge' not in EvaluatorConfig), a file I did not touch; not checked on a clean checkout. acdc-lint could not run (tsgolint executable missing). Did not confirm the new test fails without the fix.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 311/311\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- The fallback assumes a 1:1 item index mapping between the referenced node's output and the current item, like the existing pinned-data shortcut; it does not follow pairedItem chains, so results may differ from a full execution when item counts change between the nodes.\n- The cause was inferred from the code and not reproduced in a real partial run (no integration environment here).\n- Run data is read with the default run index, so multi-run nodes use the current run index behavior.\n- Typecheck error in expression.ts and the lint tool failure are unrelated to this change but were not resolved.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.19\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change adds a fallback that reads the referenced node's run data when the active node hasn't run, which resolves $().item in partial executions; no hidden tests fail. Minor differences from the merged fix (silently falling through rather than throwing on out-of-bounds, and using branch index lookup) are acceptable, though a reviewer might ask about the out-of-bounds behavior.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0095907
+ }
+}

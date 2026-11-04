@@ -1,0 +1,82 @@
+{
+ "task": "n8n-22711",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed it: a valid `$fromAI(...)` expression no longer shows up as an error when there's no execution data. Tests and type-check pass; the linter couldn't run, because its `tsgolint` tool is missing from this environment.\n\n**Cause:** `handleFromAi` in `packages/workflow/src/workflow-data-proxy.ts` reads `this.connectionInputData?.[runIndex]` and then calls `.json` on the result without checking it first. Before the workflow has run (for example, when the editor previews or validates an expression), there's no input data, so that value is `undefined`. The code then crashed with a plain `TypeError` (\"Cannot read properties of undefined (reading 'json')\"). The function already has a check right below that throws an `ExpressionError` of type `no_execution_data`, which is the \"no data yet\" case the editor knows how to handle, but the crash happened before that check was reached. So a perfectly valid `$fromAI(...)` was displayed as a real error.\n\n**Fix:** I added optional chaining at two spots: `inputData?.json`, and `...?.[itemIndex]?.json` in the `inputOverride` branch. Missing data now falls through to the existing `no_execution_data` check.\n\n**Test:** I added a case to the `$fromAI` tests in `packages/workflow/test/workflow-data-proxy.test.ts`. With no run data and empty input data, it checks that `$fromAI('full_name')` throws an `ExpressionError` with `context.type === 'no_execution_data'`.\n\n**Verification:**\n- `acdc-test packages/workflow/test/workflow-data-proxy.test.ts`: 112/112 tests passed.\n- `acdc-typecheck`: no errors.\n- `acdc-lint`: failed with \"Failed to find tsgolint executable\", so lint was not checked.\n\n{\"summary\": \"In handleFromAi (packages/workflow/src/workflow-data-proxy.ts), a missing input item (no connectionInputData, e.g. an expression preview in the editor) caused a TypeError from `inputData.json` instead of the handled 'no_execution_data' ExpressionError, so a valid $fromAI expression showed as an error. Added optional chaining (`inputData?.json`, `[itemIndex]?.json`) so it falls through to the existing no_execution_data check. Added a regression test.\", \"verification\": \"acdc-test packages/workflow/test/workflow-data-proxy.test.ts: 112/112 passed. acdc-typecheck: no errors. acdc-lint could not run (missing tsgolint executable), so lint was not checked.\", \"tests_pass\": true, \"risks\": [\"The fallback branch indexes connectionInputData by runIndex instead of itemIndex. That is existing behavior and was left unchanged, but it may be worth a look.\", \"This assumes the editor already treats 'no_execution_data' ExpressionErrors as non-errors (as it does for other expressions). The frontend is not in this checkout, so that was not checked.\", \"Lint was not checked because the tool is missing from this environment.\"]}",
+  "cost_usd": 0.22036619999999998,
+  "turns": 12,
+  "tool_calls": 11,
+  "tests_run": 2,
+  "denials": 1,
+  "tokens_in": 144698,
+  "tokens_out": 3785,
+  "model": "claude-opus-5-5",
+  "seconds": 54
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 110,
+   "total": 110
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 48,
+  "reference_lines": 2,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12987441102537045,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex 9794f66b4..662b29068 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -1034,11 +1034,11 @@ export class WorkflowDataProxy {\n \n \t\t\tif (!resultData) {\n \t\t\t\tinputData = this.connectionInputData?.[runIndex];\n-\t\t\t\tplaceholdersDataInputData = inputData.json;\n+\t\t\t\tplaceholdersDataInputData = inputData?.json;\n \t\t\t} else {\n \t\t\t\tinputData =\n \t\t\t\t\tthat.runExecutionData?.resultData.runData[that.activeNodeName]?.[runIndex].inputOverride;\n-\t\t\t\tplaceholdersDataInputData = inputData?.[NodeConnectionTypes.AiTool]?.[0]?.[itemIndex].json;\n+\t\t\t\tplaceholdersDataInputData = inputData?.[NodeConnectionTypes.AiTool]?.[0]?.[itemIndex]?.json;\n \t\t\t}\n \n \t\t\tif (!placeholdersDataInputData) {\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex f9aadb0d8..c63b78c30 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -676,6 +676,50 @@ describe('WorkflowDataProxy', () => {\n \t\t\t// Should return existing values for keys that are present\n \t\t\texpect(proxy.$fromAI('regular_field')).toEqual('regular_value');\n \t\t});\n+\n+\t\ttest('Throws no_execution_data ExpressionError when there is no input data', () => {\n+\t\t\tconst nodes = [\n+\t\t\t\t{\n+\t\t\t\t\tid: 'aiNode',\n+\t\t\t\t\tname: 'AI Node',\n+\t\t\t\t\ttype: 'n8n-nodes-base.aiAgent',\n+\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\tposition: [0, 0] as [number, number],\n+\t\t\t\t\tparameters: {},\n+\t\t\t\t},\n+\t\t\t];\n+\n+\t\t\tconst dataProxy = new WorkflowDataProxy(\n+\t\t\t\tnew Workflow({\n+\t\t\t\t\tid: '123',\n+\t\t\t\t\tname: 'test workflow',\n+\t\t\t\t\tnodes,\n+\t\t\t\t\tconnections: {},\n+\t\t\t\t\tactive: false,\n+\t\t\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\t\t}),\n+\t\t\t\tnull, // No run execution data\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'AI Node',\n+\t\t\t\t[], // No connection input data (e.g. expression preview in the editor)\n+\t\t\t\t{},\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t);\n+\n+\t\t\tconst proxy = dataProxy.getDataProxy();\n+\n+\t\t\tlet error: ExpressionError | undefined;\n+\t\t\ttry {\n+\t\t\t\tproxy.$fromAI('full_name');\n+\t\t\t} catch (e) {\n+\t\t\t\terror = e as ExpressionError;\n+\t\t\t}\n+\t\t\texpect(error).toBeInstanceOf(ExpressionError);\n+\t\t\texpect(error!.context.type).toBe('no_execution_data');\n+\t\t});\n \t});\n \n \tdescribe('$rawParameter', () => {\n"
+ },
+ "evidence": "## fix(editor): Fix correct $fromAi expression showing as error\n\nIn handleFromAi (packages/workflow/src/workflow-data-proxy.ts), a missing input item (no connectionInputData, e.g. an expression preview in the editor) caused a TypeError from `inputData.json` instead of the handled 'no_execution_data' ExpressionError, so a valid $fromAI expression showed as an error. Added optional chaining (`inputData?.json`, `[itemIndex]?.json`) so it falls through to the existing no_execution_data check. Added a regression test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 48 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 2 time(s) and says: acdc-test packages/workflow/test/workflow-data-proxy.test.ts: 112/112 passed. acdc-typecheck: no errors. acdc-lint could not run (missing tsgolint executable), so lint was not checked.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 110/110\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- The fallback branch indexes connectionInputData by runIndex instead of itemIndex. That is existing behavior and was left unchanged, but it may be worth a look.\n- This assumes the editor already treats 'no_execution_data' ExpressionErrors as non-errors (as it does for other expressions). The frontend is not in this checkout, so that was not checked.\n- Lint was not checked because the tool is missing from this environment.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.22\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The engineer's change includes the identical fix as the merged one (`inputData?.json`), which removes the crash when connectionInputData has no item at runIndex. It also adds a harmless optional chain on `[itemIndex]?.json` in the other branch, which is a safe defensive extension; no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0081447
+ }
+}

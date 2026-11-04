@@ -1,0 +1,86 @@
+{
+ "task": "n8n-41083",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I couldn't run any checks: Bash was denied for this session, so `acdc-test`, `acdc-typecheck` and `acdc-lint` never ran. The change is made, but it is unverified.\n\n**Cause:** The native expression evaluator (`packages/workflow/src/expressions/native-evaluation/evaluator.ts`) handles `$('Node').first()`, `.last()`, `.all()` and `.item` itself. When the node has no item to return, the proxy gives back `undefined`. The native path then threw its own `TypeError` on the next member access, instead of handing the expression to the engine, which owns the error message. That can produce a different error from the engine's, which is the parity guarantee this module exists to keep.\n\n**Changes:**\n- `evalNodeRefCall`: a `first()`/`last()`/`all()` result that is `undefined` or `null` now throws `EngineFallbackError`.\n- `evalMember`: a `.item` read on a node reference that resolves to `undefined` or `null` also falls back.\n- `test/native-evaluation-parity.test.ts`: `nativeOutcome` takes an optional fixture. A new `test.each` under \"errors match the engine\" covers `$('Source').first()`, `$('Source').last()` and `$input.first()` on empty run data. It asserts the native path declines and that the error matches the engine's.\n\n**Reviewer should check:**\n- In `nativeOutcome`, the new parameter block is probably mis-indented. My edits to fix the indentation did not apply, so the file may fail `acdc-lint` / prettier. Run lint and fix the formatting if needed.\n- Expressions like `$('X').first()?.json` on an empty node now always go to the engine. That is slower, but the result should be the same.\n- I have not confirmed that the `.item` fallback is reachable. It is a defensive check and is not covered by a test.\n- Nothing has been committed.\n\n```json\n{\"summary\": \"Native expression evaluation returned undefined/null for node references with no item (first()/last()/all() on an empty node, or .item resolving to nothing) and then threw its own TypeError, diverging from the engine's error. Such results now throw EngineFallbackError so the engine evaluates and reports the expression. Added a parity test for empty-run-data first()/last()/$input.first() cases asserting the native path declines and the error matches the engine.\", \"verification\": \"Not run: Bash was denied in this session, so acdc-test, acdc-typecheck and acdc-lint were not executed. Changes were checked by reading the code only.\", \"tests_pass\": false, \"risks\": [\"Not run: the new parity test and the existing suite are unverified.\", \"Possible lint/prettier failure: the indentation of the nativeOutcome signature in native-evaluation-parity.test.ts may be wrong.\", \"Node-reference expressions that hit undefined now go to the engine, which is slower; behaviour should be unchanged.\", \"The .item fallback in evalMember is not covered by a test.\", \"Nothing is committed.\"]}\n```",
+  "cost_usd": 0.036188990000000004,
+  "turns": 38,
+  "tool_calls": 37,
+  "tests_run": 0,
+  "denials": 2,
+  "tokens_in": 1390422,
+  "tokens_out": 21337,
+  "model": "claude-haiku-5-5",
+  "seconds": 145
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 459,
+   "total": 459
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards a node reference call that returns no item shape hands off to the engine"
+  ],
+  "typecheck": {
+   "ok": false,
+   "errors": [
+    "test/native-evaluation-parity.test.ts(187,4): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'IRunExecutionData | null'.",
+    "test/native-evaluation-parity.test.ts(195,19): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type '{ pairedItem: { item: number; }; binary: { file: { data: string; mimeType: string; fileName: string; fileSize: string; }; }; json: { item: { name: string; count: number; active: boolean; disabled: boolean; nothing: null; ... 14 more ...; re: RegExp; }; }; }[]'."
+   ],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": false,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 39,
+  "reference_lines": 8,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.16727445667743113,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": false,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 80dde1648..35c2b43c5 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -156,6 +156,11 @@ function evalMember(node: Extract<SimpleNode, { kind: 'member' }>, env: Env): un\n \n \tconst value = isParameterRead(node) ? readParameter(object, node.key, env) : object[node.key];\n \n+\t// `.item` with no item behind it is the engine's to report, as above.\n+\tif (node.object.kind === 'nodeRef' && (value === undefined || value === null)) {\n+\t\tthrow new EngineFallbackError();\n+\t}\n+\n \t// Neither crosses an engine boundary the same way twice (the vm bridge\n \t// drops a nested function but fails on an inherited one; legacy throws),\n \t// so the configured engine decides rather than this module guessing.\n@@ -508,6 +513,9 @@ function evalNodeRefCall(proxy: unknown, method: string, env: Env): unknown {\n \tif (typeof fn !== 'function') throw new EngineFallbackError();\n \n \tconst result = bounded(fn.call(proxy));\n+\t// No item to read (`first()` on an empty node): the engine owns the\n+\t// error for whatever reads it next, so its message is the one reported.\n+\tif (result === undefined || result === null) throw new EngineFallbackError();\n \tenv.charge(isArray(result) ? result.length : 1);\n \n \treturn result;\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex cd3353bf9..b9be47c9b 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -177,10 +177,12 @@ describe('Expression - fast native evaluation parity', () => {\n \t// builds: HANDLED entries must be evaluated natively, RUNTIME_BAILOUT\n \t// entries must hand off to the engine. Parity alone cannot tell the two\n \t// apart, since a bailout returns the engine's value either way.\n-\tconst nativeOutcome = (expr: string) => {\n+\tconst nativeOutcome = (\n+\t\t\texpr: string,\n+\t\t\t{ data, items }: { data: unknown; items: unknown[] } = fixtureFor(expr),\n+\t\t) => {\n \t\tconst node = workflow.getNode('Current');\n-\t\tconst { data, items } = fixtureFor(expr);\n-\t\tconst proxy = new WorkflowDataProxy(\n+\t\t\t\tconst proxy = new WorkflowDataProxy(\n \t\t\tworkflow,\n \t\t\tdata,\n \t\t\t0,\n@@ -316,6 +318,29 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t// No execution data for the source node: every `$json` read throws.\n \t\tconst emptyRunData = runDataFor([]);\n \n+\t\t\t// A node reference with no item (`first()` or `last()` on a node without\n+\t\t\t// data) yields nothing to read, so the engine reports the error.\n+\t\t\ttest.each([\n+\t\t\t\t\"={{ $('Source').first().json.item.name }}\",\n+\t\t\t\t\"={{ $('Source').last().json.item.name }}\",\n+\t\t\t\t'={{ $input.first().json.item.name }}',\n+\t\t\t])('a node reference with no item hands %s to the engine', (expr) => {\n+\t\t\t\texpect(nativeOutcome(expr, { data: emptyRunData, items: [] }).handled).toBe(false);\n+\n+\t\t\t\tconst capture = (native: boolean): Error => {\n+\t\t\t\t\ttry {\n+\t\t\t\t\t\tevaluate(expr, native, emptyRunData, []);\n+\t\t\t\t\t} catch (error) {\n+\t\t\t\t\t\treturn error as Error;\n+\t\t\t\t\t}\n+\t\t\t\t\tthrow new Error('expected an error');\n+\t\t\t\t};\n+\t\t\t\tconst engineError = capture(false);\n+\t\t\t\tconst nativeError = capture(true);\n+\t\t\t\texpect(nativeError).toBeInstanceOf(engineError.constructor);\n+\t\t\t\texpect(nativeError.message).toBe(engineError.message);\n+\t\t\t});\n+\n \t\ttest.each(ERROR_CORPUS)('%s', (expr) => {\n \t\t\texpect(isNativelyEvaluable(expr.slice(1))).toBe(true);\n \n"
+ },
+ "evidence": "## fix(core): Hand node reference results without an item shape to the engine (no-changelog)\n\nNative expression evaluation returned undefined/null for node references with no item (first()/last()/all() on an empty node, or .item resolving to nothing) and then threw its own TypeError, diverging from the engine's error. Such results now throw EngineFallbackError so the engine evaluates and reports the expression. Added a parity test for empty-run-data first()/last()/$input.first() cases asserting the native path declines and the error matches the engine.\n\n### What changed\n- 1 source file(s), 1 test file(s), 39 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 0 time(s) and says: Not run: Bash was denied in this session, so acdc-test, acdc-typecheck and acdc-lint were not executed. Changes were checked by reading the code only.\n- Type check: 2 error(s); lint: passes\n- Tests for the issue: 0/1; tests that passed before: 459/459\n\n### Risks that remain\n- Change risk: medium (17% chance of a revert or follow-up fix, from n8n's history)\n- Not run: the new parity test and the existing suite are unverified.\n- Possible lint/prettier failure: the indentation of the nativeOutcome signature in native-evaluation-parity.test.ts may be wrong.\n- Node-reference expressions that hit undefined now go to the engine, which is slower; behaviour should be unchanged.\n- The .item fallback in evalMember is not covered by a test.\n- Nothing is committed.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.04\n",
+ "judge": {
+  "verdict": "wrong",
+  "cause": "wrong_cause",
+  "reviewer_would_accept": false,
+  "reason": "The issue is that node reference call results lacking an item shape (e.g. a non-array from all(), or a non-object from first()/last()) must fall back to the engine, as happens with Object.prototype-named nodes. The change instead falls back only on undefined/null, so non-item values such as host objects or functions still pass through natively, and it adds an unrelated null/undefined fallback in evalMember that could change legitimate behavior.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0103047
+ }
+}

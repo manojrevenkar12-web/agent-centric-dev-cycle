@@ -1,0 +1,82 @@
+{
+ "task": "n8n-26550",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed `process.version` in the expression sandbox, and the tests pass. Type-checking failed on an error unrelated to this change, and I couldn't run the linter.\n\n**Cause:** in `packages/workflow/src/expression.ts:477`, the cut-down `process` object that expressions can see set `version` to `process.pid`. So `{{ process.version }}` returned the process ID (a number) instead of the Node version string (e.g. `v22.x.x`). The fix is a one-line change to `version: process.version`.\n\n**Test:** I added a test in `packages/workflow/test/expression.test.ts` that checks `process.version`, `pid`, `platform` and `arch` inside expressions match the real values.\n\n**Verification:**\n- `acdc-test test/expression.test.ts`: 176 of 176 passed, including the new test.\n- `acdc-typecheck`: failed with one error, `src/expression.ts(215,5): 'bridge' does not exist in type 'EvaluatorConfig'`. It's on a line I didn't change, about the evaluator config type, so it looks like it was already there. I didn't confirm that by checking against an unchanged checkout.\n- `acdc-lint`: couldn't run, because the `tsgolint` executable is missing (`oxlint-tsgolint`). Lint hasn't been checked.\n\n{\"summary\": \"In packages/workflow/src/expression.ts the sandboxed `process` object exposed to expressions set `version: process.pid`, so `{{ process.version }}` returned the PID instead of the Node version string. Changed it to `version: process.version` and added a test that checks process.version/pid/platform/arch inside expressions match the real values.\", \"verification\": \"acdc-test test/expression.test.ts: 176/176 passed, including the new test. acdc-typecheck: failed with one error on a line I didn't change (src/expression.ts:215, 'bridge' not in EvaluatorConfig); it looks like it was already there but I didn't confirm that against an unchanged checkout. acdc-lint: couldn't run because the tsgolint executable is missing, so lint wasn't checked.\", \"tests_pass\": true, \"tests_pass_note\": \"tests passed; typecheck failed on an unrelated error and lint did not run\", \"risks\": [\"Expressions that relied on process.version returning a number (the PID) will now get a string like 'v22.x.x'. That's the intended fix but it changes behaviour.\", \"The typecheck error at src/expression.ts:215 ('bridge' not in EvaluatorConfig) is unrelated but needs confirming as already present and fixing separately\", \"Lint wasn't checked because the oxlint-tsgolint executable is missing\"]}",
+  "cost_usd": 0.17465340000000001,
+  "turns": 12,
+  "tool_calls": 11,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 133166,
+  "tokens_out": 2702,
+  "model": "claude-opus-5-5",
+  "seconds": 60
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 169,
+   "total": 169
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expression.ts",
+   "packages/workflow/test/expression.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/expression.test.ts"
+  ],
+  "lines_changed": 9,
+  "reference_lines": 2,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": null,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expression.ts b/packages/workflow/src/expression.ts\nindex 63f09629d..5d81b7dc8 100644\n--- a/packages/workflow/src/expression.ts\n+++ b/packages/workflow/src/expression.ts\n@@ -474,7 +474,7 @@ export class Expression {\n \t\t\t\t\t\tpid: process.pid,\n \t\t\t\t\t\tppid: process.ppid,\n \t\t\t\t\t\trelease: process.release,\n-\t\t\t\t\t\tversion: process.pid,\n+\t\t\t\t\t\tversion: process.version,\n \t\t\t\t\t\tversions: process.versions,\n \t\t\t\t\t}\n \t\t\t\t: {};\ndiff --git a/packages/workflow/test/expression.test.ts b/packages/workflow/test/expression.test.ts\nindex 58fe16e20..ce4601a89 100644\n--- a/packages/workflow/test/expression.test.ts\n+++ b/packages/workflow/test/expression.test.ts\n@@ -81,6 +81,13 @@ describe('Expression', () => {\n \t\t\texpect(evaluate('={{unescape}}')).toEqual({});\n \t\t});\n \n+\t\tit('should expose the supported subset of process properties', () => {\n+\t\t\texpect(evaluate('={{process.version}}')).toEqual(process.version);\n+\t\t\texpect(evaluate('={{process.pid}}')).toEqual(process.pid);\n+\t\t\texpect(evaluate('={{process.platform}}')).toEqual(process.platform);\n+\t\t\texpect(evaluate('={{process.arch}}')).toEqual(process.arch);\n+\t\t});\n+\n \t\tit('should be able to use global built-ins from allowlist', () => {\n \t\t\texpect(evaluate('={{new Date()}}')).toBeInstanceOf(Date);\n \t\t\texpect(evaluate('={{DateTime.now().toLocaleString()}}')).toEqual(\n"
+ },
+ "evidence": "## fix(core): Correct `process.version` in expression sandbox\n\n_The agent gave no summary._\n\n### What changed\n- 1 source file(s), 1 test file(s), 9 changed lines\n- `packages/workflow/src/expression.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: nothing\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 169/169\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.17\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change is identical to the merged fix: it replaces the incorrect `process.pid` with `process.version` for the `version` field in the expression sandbox's process object. No hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0013340000000000001
+ }
+}

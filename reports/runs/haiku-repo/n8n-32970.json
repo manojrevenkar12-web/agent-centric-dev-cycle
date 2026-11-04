@@ -1,0 +1,86 @@
+{
+ "task": "n8n-32970",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The full package suite passed, typecheck produced no errors, and lint could not run in this environment. Here's the summary.\n\n**Cause:** `WorkflowDataProxy.nodeParameterGetter` (`packages/workflow/src/workflow-data-proxy.ts`) resolves an expression-mode parameter read through `$parameter` by calling `getParameterValue(...)` with a hard-coded `{}` as `selfData`. So a value like `={{ $self.apiHost }}` stored on a node and read via `={{ $parameter.value1 }}` loses the caller's `$self` and resolves to `undefined`.\n\n**Change:**\n- `src/workflow-data-proxy.ts:378`: `{}` → `that.selfData`, so the nested evaluation sees the same `$self` as the caller. This is a one-line change.\n- `test/workflow-expression.test.ts`: new `describe('$self in expression-mode parameters')` with a test that reads `={{ $parameter.value1 }}` where `value1` is `={{ $self.apiHost }}`, called with `selfData = { apiHost: 'example.com' }`, and expects `'example.com'`.\n\n**Verification:**\n- The new test fails with `undefined` when the fix is reverted and passes with it applied.\n- `acdc-test` on `workflow-expression`, `workflow-data-proxy`, and `expression` test files: 357/357 passed.\n- `acdc-test` for the full package: 68 test files passed, 0 failed.\n- `acdc-typecheck`: no output, no errors reported.\n- `acdc-lint`: **not verified.** It exits with `Failed to find tsgolint executable` (the `oxlint-tsgolint` package is missing from this checkout), so the linter never ran on the changed files.\n\n**Something I did along the way:** the test first used `host`, which `test.set` doesn't declare, so the `Workflow` constructor's parameter normalization dropped it. That made the test look broken for an unrelated reason. Switching to `value1` (declared on `test.set`) fixed the test setup.\n\n**Risks for review:**\n- Two other places in the same file also pass `{}` as `selfData`: `$evaluateExpression` (around line 1540) and `$item` (around line 1559). They could have the same `$self` loss. I did not change them because the issue is scoped to `$parameter`. A reviewer should decide whether to fix them in this PR.\n- `Expression.renderExpression` swallows non-`ExpressionError` failures and returns `null`, so a bad `$self` reference may fail quietly. I did not change this.\n- Lint is unverified, so this should be run in a full checkout before merge.\n\n```json\n{\"summary\": \"Expression-mode parameters read via $parameter lost $self: nodeParameterGetter resolved nested expressions with a hard-coded {} as selfData. Changed that to that.selfData (workflow-data-proxy.ts:378) and added a regression test in workflow-expression.test.ts that reads a $self-backed parameter through $parameter. The test fails without the fix and passes with it.\", \"verification\": \"acdc-test on workflow-expression, workflow-data-proxy and expression test files: 357/357 passed. Full acdc-test for the package: 68 files passed, 0 failed. acdc-typecheck: no errors. acdc-lint could not run: missing tsgolint executable (oxlint-tsgolint not installed), so lint is unverified.\", \"tests_pass\": true, \"risks\": [\"$evaluateExpression and $item in workflow-data-proxy.ts also pass {} as selfData and may have the same $self loss; not changed here.\", \"Expression.renderExpression swallows non-ExpressionError failures and returns null, which can hide bad $self references.\", \"Lint was not run in this environment and needs a run in a full checkout before merge.\"]}\n```",
+  "cost_usd": 0.055054099999999995,
+  "turns": 67,
+  "tool_calls": 66,
+  "tests_run": 10,
+  "denials": 3,
+  "tokens_in": 2354222,
+  "tokens_out": 38364,
+  "model": "claude-haiku-5-5",
+  "seconds": 361
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 345,
+   "total": 345
+  },
+  "failing": [
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy $self strips the leading \"=\" from a literal expression-mode value",
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy $self resolves an expression-mode value containing a template",
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy $self does not leak the \"=\" marker into a mid-string URL template"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-expression.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-expression.test.ts"
+  ],
+  "lines_changed": 53,
+  "reference_lines": 28,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1299305481175214,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex aa2721197..9572efcbf 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -375,7 +375,7 @@ export class WorkflowDataProxy {\n \t\t\t\t\t\tthat.additionalKeys,\n \t\t\t\t\t\tthat.executeData,\n \t\t\t\t\t\tfalse,\n-\t\t\t\t\t\t{},\n+\t\t\t\t\t\tthat.selfData,\n \t\t\t\t\t\tthat.contextNodeName,\n \t\t\t\t\t);\n \t\t\t\t}\ndiff --git a/packages/workflow/test/workflow-expression.test.ts b/packages/workflow/test/workflow-expression.test.ts\nindex 1a27cf63d..ac9ed3923 100644\n--- a/packages/workflow/test/workflow-expression.test.ts\n+++ b/packages/workflow/test/workflow-expression.test.ts\n@@ -45,4 +45,55 @@ describe('WorkflowExpression', () => {\n \t\t\texpect(result).toEqual({ key: 'title|display', type: 'display' });\n \t\t});\n \t});\n+\n+\tdescribe('$self in expression-mode parameters', () => {\n+\t\tconst nodeTypes = Helpers.NodeTypes();\n+\t\tconst workflow = new Workflow({\n+\t\t\tid: '1',\n+\t\t\tnodes: [\n+\t\t\t\t{\n+\t\t\t\t\tname: 'node',\n+\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\ttype: 'test.set',\n+\t\t\t\t\tid: 'uuid-1234',\n+\t\t\t\t\tposition: [0, 0],\n+\t\t\t\t\tparameters: {\n+\t\t\t\t\t\tvalue1: '={{ $self.apiHost }}',\n+\t\t\t\t\t},\n+\t\t\t\t},\n+\t\t\t],\n+\t\t\tconnections: {},\n+\t\t\tactive: false,\n+\t\t\tnodeTypes,\n+\t\t});\n+\t\tconst expression = workflow.expression;\n+\n+\t\tbeforeAll(async () => {\n+\t\t\tawait expression.acquireIsolate();\n+\t\t});\n+\t\tafterAll(async () => {\n+\t\t\tawait expression.releaseIsolate();\n+\t\t});\n+\n+\t\tit('should resolve $self inside a parameter referenced via $parameter', () => {\n+\t\t\t// e.g. a credential template field `={{ $parameter.value1 }}` whose stored\n+\t\t\t// value is `={{ $self.apiHost }}` must see the same selfData as the caller.\n+\t\t\tconst result = expression.getParameterValue(\n+\t\t\t\t'={{ $parameter.value1 }}',\n+\t\t\t\tnull,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'node',\n+\t\t\t\t[],\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t\tfalse,\n+\t\t\t\t{ apiHost: 'example.com' },\n+\t\t\t);\n+\n+\t\t\texpect(result).toEqual('example.com');\n+\t\t});\n+\n+\t});\n });\n"
+ },
+ "evidence": "## fix(core): Resolve expression-mode $self values in credential templates\n\nExpression-mode parameters read via $parameter lost $self: nodeParameterGetter resolved nested expressions with a hard-coded {} as selfData. Changed that to that.selfData (workflow-data-proxy.ts:378) and added a regression test in workflow-expression.test.ts that reads a $self-backed parameter through $parameter. The test fails without the fix and passes with it.\n\n### What changed\n- 1 source file(s), 1 test file(s), 53 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 10 time(s) and says: acdc-test on workflow-expression, workflow-data-proxy and expression test files: 357/357 passed. Full acdc-test for the package: 68 files passed, 0 failed. acdc-typecheck: no errors. acdc-lint could not run: missing tsgolint executable (oxlint-tsgolint not installed), so lint is unverified.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 0/3; tests that passed before: 345/345\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- $evaluateExpression and $item in workflow-data-proxy.ts also pass {} as selfData and may have the same $self loss; not changed here.\n- Expression.renderExpression swallows non-ExpressionError failures and returns null, which can hide bad $self references.\n- Lint was not run in this environment and needs a run in a full checkout before merge.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.06\n",
+ "judge": {
+  "verdict": "wrong",
+  "cause": "wrong_cause",
+  "reviewer_would_accept": false,
+  "reason": "The engineer's change edits a different call site (passing selfData as a parameter in another getParameterValue call) and leaves the $self proxy getter returning the raw stored value, so the leading '=' marker and unevaluated templates still leak. The real fix is to resolve expression-mode values inside the $self proxy's get handler, which this change does not do.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0100427
+ }
+}

@@ -1,0 +1,84 @@
+{
+ "task": "n8n-41840",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I'm not going to retry the typecheck with a different wrapper after that denial. Here is where things stand.\n\n**Cause:** `WorkflowActivationError` picks its `level` by matching message text (`'invalid credentials'`, etc.). It ignores the `failure` a node declares. A node that reports `failure: { cause: 'credential-invalid' }` therefore still produced an `error`-level activation error, which gets reported, even though the user just needs to reconnect the credential.\n\n**Change** (`packages/workflow/src/errors/workflow-activation.error.ts`):\n- `setLevel` now takes the original `cause` and sets `level = 'warning'` when `cause.failure.cause === 'credential-invalid'`.\n- The failure is read from the original cause, before the constructor re-wraps `ExecutionBaseError` causes into a plain `Error`. The re-wrap drops `failure`, so reading it afterwards would miss it.\n- An explicit `level` option still wins, and the existing message-based rules are unchanged.\n\n**Tests** (`packages/workflow/test/errors/workflow-activation.error.test.ts`): added two cases. A `NodeApiError` with `credential-invalid` gives `warning`. One with `configuration-invalid` stays `error`.\n\n**Verification:**\n- `acdc-test` on the activation-error and failure test files: 2 files, 23 tests, all passed.\n- `acdc-lint` on both changed files: 0 warnings, 0 errors.\n- `acdc-typecheck` printed no errors. I did not capture its exit code: my last attempt to re-check it was denied by the permission mode, so treat the type check as \"no errors printed\" rather than confirmed.\n\nI did not run the new test against the unfixed code, so I have not seen it fail before the change.\n\n```json\n{\"summary\": \"WorkflowActivationError derived its level only from message text, so activation errors caused by a node-declared 'credential-invalid' failure were reported at 'error' level. setLevel now downgrades those to 'warning', reading the failure from the original cause before it is re-wrapped. Added two tests covering credential-invalid (warning) and configuration-invalid (error).\", \"verification\": \"acdc-test on workflow-activation.error.test.ts and failure.test.ts: 2 files, 23 tests passed. acdc-lint on the changed src and test files: 0 warnings, 0 errors. acdc-typecheck printed no errors, but its exit code was not captured because a follow-up Bash call was denied.\", \"tests_pass\": true, \"risks\": [\"Level is now 'warning' for any cause carrying failure.cause === 'credential-invalid', so a reviewer should confirm that downgrading these activation errors from error-reporting is the intended behaviour.\", \"The check reads `failure` only from the direct cause. An error nested deeper in the cause chain, or one wrapped by a plain Error, would still be reported at 'error' level.\", \"The fix relies on nodes declaring failure: { cause: 'credential-invalid' }. Activation errors from nodes that don't declare it still go through the message-matching path only.\", \"Typecheck exit status was not confirmed; a reviewer or CI should check it.\"]}\n```",
+  "cost_usd": 0.00745765,
+  "turns": 12,
+  "tool_calls": 11,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 147032,
+  "tokens_out": 5736,
+  "model": "claude-haiku-5-5",
+  "seconds": 63
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 12,
+   "total": 12
+  },
+  "failing": [
+   "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when an error wrapped by the cause declares credential-invalid",
+   "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when the cause declares configuration-invalid"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/errors/workflow-activation.error.ts",
+   "packages/workflow/test/errors/workflow-activation.error.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/errors/workflow-activation.error.test.ts"
+  ],
+  "lines_changed": 56,
+  "reference_lines": 24,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.08582230455309575,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/errors/workflow-activation.error.ts b/packages/workflow/src/errors/workflow-activation.error.ts\nindex f6345be94..df03233b3 100644\n--- a/packages/workflow/src/errors/workflow-activation.error.ts\n+++ b/packages/workflow/src/errors/workflow-activation.error.ts\n@@ -1,4 +1,5 @@\n import { ExecutionBaseError } from './abstract/execution-base.error';\n+import type { Failure } from './failure';\n import type { ErrorLevel } from '@n8n/errors';\n import type { INode } from '../interfaces';\n \n@@ -47,15 +48,22 @@ export class WorkflowActivationError extends ExecutionBaseError {\n \t\t\t\t\t? cause.description\n \t\t\t\t\t: cause.message;\n \t\t}\n-\t\tthis.setLevel(level);\n+\t\tthis.setLevel(level, cause);\n \t}\n \n-\tprivate setLevel(level?: ErrorLevel) {\n+\tprivate setLevel(level: ErrorLevel | undefined, cause: Error | undefined) {\n \t\tif (level) {\n \t\t\tthis.level = level;\n \t\t\treturn;\n \t\t}\n \n+\t\t// The credential needs reconnecting: the user has to act, so it is not an error to report.\n+\t\tconst failure = cause && 'failure' in cause ? (cause as { failure?: Failure }).failure : undefined;\n+\t\tif (failure?.cause === 'credential-invalid') {\n+\t\t\tthis.level = 'warning';\n+\t\t\treturn;\n+\t\t}\n+\n \t\tif (\n \t\t\t[\n \t\t\t\t'etimedout', // Node.js\ndiff --git a/packages/workflow/test/errors/workflow-activation.error.test.ts b/packages/workflow/test/errors/workflow-activation.error.test.ts\nindex ddb4ea7e7..e191d7cd9 100644\n--- a/packages/workflow/test/errors/workflow-activation.error.test.ts\n+++ b/packages/workflow/test/errors/workflow-activation.error.test.ts\n@@ -1,4 +1,8 @@\n-import { WorkflowActivationError, WorkflowOperationError } from '../../src/errors';\n+import {\n+\tNodeApiError,\n+\tWorkflowActivationError,\n+\tWorkflowOperationError,\n+} from '../../src/errors';\n \n describe('WorkflowActivationError', () => {\n \tit('should default to `error` level', () => {\n@@ -30,6 +34,44 @@ describe('WorkflowActivationError', () => {\n \t\texpect(error.level).toBe('warning');\n \t});\n \n+\tit('should set `level` to `warning` when the cause says the credential is invalid', () => {\n+\t\tconst credentialCause = new NodeApiError(\n+\t\t\t{\n+\t\t\t\tid: '1',\n+\t\t\t\tname: 'Test Node',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\ttype: 'n8n-nodes-base.test',\n+\t\t\t\tposition: [0, 0],\n+\t\t\t\tparameters: {},\n+\t\t\t},\n+\t\t\t{ message: 'unauthorized' },\n+\t\t\t{ failure: { cause: 'credential-invalid' } },\n+\t\t);\n+\n+\t\tconst error = new WorkflowActivationError('Activation failed', { cause: credentialCause });\n+\n+\t\texpect(error.level).toBe('warning');\n+\t});\n+\n+\tit('should keep `error` level for a cause that is not a credential failure', () => {\n+\t\tconst otherCause = new NodeApiError(\n+\t\t\t{\n+\t\t\t\tid: '1',\n+\t\t\t\tname: 'Test Node',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\ttype: 'n8n-nodes-base.test',\n+\t\t\t\tposition: [0, 0],\n+\t\t\t\tparameters: {},\n+\t\t\t},\n+\t\t\t{ message: 'bad request' },\n+\t\t\t{ failure: { cause: 'configuration-invalid' } },\n+\t\t);\n+\n+\t\tconst error = new WorkflowActivationError('Activation failed', { cause: otherCause });\n+\n+\t\texpect(error.level).toBe('error');\n+\t});\n+\n \tit('should surface the cause message in `description`', () => {\n \t\tconst error = new WorkflowActivationError('Generic wrapper message', { cause });\n \n"
+ },
+ "evidence": "## fix(core): Do not report activation errors for credentials that need reconnecting\n\nWorkflowActivationError derived its level only from message text, so activation errors caused by a node-declared 'credential-invalid' failure were reported at 'error' level. setLevel now downgrades those to 'warning', reading the failure from the original cause before it is re-wrapped. Added two tests covering credential-invalid (warning) and configuration-invalid (error).\n\n### What changed\n- 1 source file(s), 1 test file(s), 56 changed lines\n- `packages/workflow/src/errors/workflow-activation.error.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on workflow-activation.error.test.ts and failure.test.ts: 2 files, 23 tests passed. acdc-lint on the changed src and test files: 0 warnings, 0 errors. acdc-typecheck printed no errors, but its exit code was not captured because a follow-up Bash call was denied.\n- Type check: passes; lint: passes\n- Tests for the issue: 1/3; tests that passed before: 12/12\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (9% chance of a revert or follow-up fix, from n8n's history)\n- Level is now 'warning' for any cause carrying failure.cause === 'credential-invalid', so a reviewer should confirm that downgrading these activation errors from error-reporting is the intended behaviour.\n- The check reads `failure` only from the direct cause. An error nested deeper in the cause chain, or one wrapped by a plain Error, would still be reported at 'error' level.\n- The fix relies on nodes declaring failure: { cause: 'credential-invalid' }. Activation errors from nodes that don't declare it still go through the message-matching path only.\n- Typecheck exit status was not confirmed; a reviewer or CI should check it.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change only downgrades to warning when the direct cause declares 'credential-invalid'. It ignores 'configuration-invalid' and failures declared by errors wrapped deeper in the cause chain, so the two hidden tests fail. The issue implies reconnect-needed credentials surfaced through wrapped errors should also be handled.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0110587
+ }
+}

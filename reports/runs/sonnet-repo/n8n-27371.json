@@ -1,0 +1,87 @@
+{
+ "task": "n8n-27371",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Renaming a node whose name contains quotes now updates the references to it in expressions. The new tests and the existing `workflow.test.ts` tests pass. I couldn't get lint results, and `acdc-typecheck` reports one error in a file I didn't touch.\n\n**Cause:** In an expression, a quote in a node name is backslash-escaped, so `$('Bob\\'s node')` is the text for a node named `Bob's node`. `applyAccessPatterns` looked for the raw name, never found it, and left the reference alone. A new name containing a quote was also inserted without escaping, which would have produced invalid JavaScript.\n\n**Fix:** `applyAccessPatterns` in `packages/workflow/src/node-reference-parser-utils.ts` now also matches and writes the name in its escaped form, separately for `'`-delimited and `\"`-delimited strings. The `$node.` callback still runs once.\n\n**Tests:** I added three cases to `test/node-reference-parser-utils.test.ts`:\n- renaming away from a name with a `'`;\n- renaming to a name with a `'`;\n- `\"`-delimited references, with both `\"` and `'` in the old name.\n\n**Verification:**\n- `acdc-test test/node-reference-parser-utils.test.ts test/workflow.test.ts` passes: 182 of 182 tests.\n- `acdc-lint` failed to run (\"Failed to find tsgolint executable\"), so I couldn't lint and wrapped one long line by hand.\n- `acdc-typecheck` reports `src/expression.ts(215,5)`: `'bridge'` does not exist in type `EvaluatorConfig`. I didn't touch that file and think it was already failing.\n\n{\"summary\": \"applyAccessPatterns now also matches and emits node names with quotes in their backslash-escaped in-string form, per quote type, so renaming nodes with quotes (e.g. Bob's node) updates $(...), $node[...], $items(...) references; added tests\", \"verification\": \"acdc-test on node-reference-parser-utils.test.ts and workflow.test.ts: 182/182 passed. acdc-lint could not run (missing tsgolint executable). acdc-typecheck shows one error in src/expression.ts (EvaluatorConfig 'bridge'), a file I did not touch.\", \"tests_pass\": true, \"risks\": [\"Raw (unescaped) matching is kept for backward compatibility with an existing test that uses pre-escaped names containing a backslash; a new name containing quotes is only inserted raw in that legacy case\", \"Backslashes in node names are not specially escaped\", \"Lint was not run and formatting was done by hand\", \"Typecheck error in src/expression.ts is unrelated and I believe it was already failing\"]}",
+  "cost_usd": 0.2468794,
+  "turns": 19,
+  "tool_calls": 18,
+  "tests_run": 2,
+  "denials": 1,
+  "tokens_in": 357914,
+  "tokens_out": 9212,
+  "model": "claude-sonnet-5-5",
+  "seconds": 95
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 5
+  },
+  "pass_to_pass": {
+   "passed": 49,
+   "total": 49
+  },
+  "failing": [
+   "packages/workflow/test/node-reference-parser-utils.test.ts :: NodeReferenceParserUtils applyAccessPatterns should correctly transform expression \"'$(\"test\\\\some\")'\" with previousName \"'test\\some'\" and newName \"'other node'\"",
+   "packages/workflow/test/node-reference-parser-utils.test.ts :: NodeReferenceParserUtils applyAccessPatterns should correctly transform expression \"'$(\"old name\")'\" with previousName \"'old name'\" and newName \"'new \\'name\\''\"",
+   "packages/workflow/test/node-reference-parser-utils.test.ts :: NodeReferenceParserUtils applyAccessPatterns should correctly transform expression \"'$(\"test some\")'\" with previousName \"'test some'\" and newName \"'other\\node'\"",
+   "packages/workflow/test/node-reference-parser-utils.test.ts :: NodeReferenceParserUtils applyAccessPatterns should correctly transform expression \"'$(\"old\\\"Na\\\\me\\\\'\")'\" with previousName \"'old\"Na\\me\\''\" and newName \"'n\\\\'ew\\\"Name'\""
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-reference-parser-utils.ts",
+   "packages/workflow/test/node-reference-parser-utils.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-reference-parser-utils.test.ts"
+  ],
+  "lines_changed": 74,
+  "reference_lines": 43,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/node-reference-parser-utils.ts b/packages/workflow/src/node-reference-parser-utils.ts\nindex 28b9895ff..bf8a7b206 100644\n--- a/packages/workflow/src/node-reference-parser-utils.ts\n+++ b/packages/workflow/src/node-reference-parser-utils.ts\n@@ -102,22 +102,41 @@ const ACCESS_PATTERNS: AccessPattern[] = [\n ];\n \n export function applyAccessPatterns(expression: string, previousName: string, newName: string) {\n-\t// To not run the \"expensive\" regex stuff when it is not needed\n-\t// make a simple check first if it really contains the node-name\n-\tif (!expression.includes(previousName)) return expression;\n-\n-\t// Really contains node-name (even though we do not know yet if really as $node-expression)\n-\tconst escapedOldName = backslashEscape(previousName); // for match\n-\tconst escapedNewName = dollarEscape(newName); // for replacement\n-\n-\tfor (const pattern of ACCESS_PATTERNS) {\n-\t\tif (expression.includes(pattern.checkPattern)) {\n-\t\t\texpression = expression.replace(\n-\t\t\t\tnew RegExp(pattern.replacePattern(escapedOldName), 'g'),\n-\t\t\t\t`$1${escapedNewName}$2`,\n-\t\t\t);\n-\n-\t\t\tif (pattern.customCallback) {\n+\t// Match the name as is, and additionally as it appears inside a string literal\n+\t// delimited by each kind of quote, where quotes in the name are backslash-escaped\n+\t// (e.g. `$('Bob\\'s node')`)\n+\tconst variants: Array<{ quote?: string; oldName: string; newName: string }> = [];\n+\t// A new name containing quotes can't be inserted unescaped (unless the names are already escaped)\n+\tif (!/['\"]/.test(newName) || previousName.includes('\\\\')) {\n+\t\tvariants.push({ oldName: previousName, newName });\n+\t}\n+\tfor (const quote of [\"'\", '\"']) {\n+\t\tconst escapeForQuote = (name: string) => name.replaceAll(quote, `\\\\${quote}`);\n+\t\tif (!previousName.includes(quote) && !newName.includes(quote)) continue;\n+\t\tvariants.push({\n+\t\t\tquote,\n+\t\t\toldName: escapeForQuote(previousName),\n+\t\t\tnewName: escapeForQuote(newName),\n+\t\t});\n+\t}\n+\n+\tfor (const variant of variants) {\n+\t\t// To not run the \"expensive\" regex stuff when it is not needed\n+\t\t// make a simple check first if it really contains the node-name\n+\t\tif (!expression.includes(variant.oldName)) continue;\n+\n+\t\tconst escapedOldName = backslashEscape(variant.oldName); // for match\n+\t\tconst escapedNewName = dollarEscape(variant.newName); // for replacement\n+\n+\t\tfor (const pattern of ACCESS_PATTERNS) {\n+\t\t\tif (!expression.includes(pattern.checkPattern)) continue;\n+\n+\t\t\tlet source = pattern.replacePattern(escapedOldName);\n+\t\t\t// Restrict the pattern to the quote character currently handled\n+\t\t\tif (variant.quote) source = source.replaceAll(`['\"]`, variant.quote);\n+\t\t\texpression = expression.replace(new RegExp(source, 'g'), `$1${escapedNewName}$2`);\n+\n+\t\t\tif (!variant.quote && pattern.customCallback) {\n \t\t\t\texpression = pattern.customCallback(expression, newName, escapedNewName);\n \t\t\t}\n \t\t}\ndiff --git a/packages/workflow/test/node-reference-parser-utils.test.ts b/packages/workflow/test/node-reference-parser-utils.test.ts\nindex 537abefb3..9d2cafee5 100644\n--- a/packages/workflow/test/node-reference-parser-utils.test.ts\n+++ b/packages/workflow/test/node-reference-parser-utils.test.ts\n@@ -14,6 +14,29 @@ const makeNode = (name: string, expressions?: string[]) =>\n \t}) as INode;\n \n describe('NodeReferenceParserUtils', () => {\n+\tdescribe('applyAccessPatterns with quotes in node names', () => {\n+\t\tit('renames a node whose name contains a single quote', () => {\n+\t\t\texpect(applyAccessPatterns(\"={{ $('Bob\\\\'s node').item.json.a }}\", \"Bob's node\", 'New')).toBe(\n+\t\t\t\t\"={{ $('New').item.json.a }}\",\n+\t\t\t);\n+\t\t});\n+\n+\t\tit('renames to a name containing a single quote, escaping it', () => {\n+\t\t\texpect(applyAccessPatterns(\"={{ $('Old').item.json.a }}\", 'Old', \"Bob's node\")).toBe(\n+\t\t\t\t\"={{ $('Bob\\\\'s node').item.json.a }}\",\n+\t\t\t);\n+\t\t});\n+\n+\t\tit('handles double-quoted references with quotes in the name', () => {\n+\t\t\texpect(applyAccessPatterns('={{ $(\"Say \\\\\"hi\\\\\"\").first() }}', 'Say \"hi\"', 'New')).toBe(\n+\t\t\t\t'={{ $(\"New\").first() }}',\n+\t\t\t);\n+\t\t\texpect(applyAccessPatterns('={{ $(\"it\\'s\").first() }}', \"it's\", 'New')).toBe(\n+\t\t\t\t'={{ $(\"New\").first() }}',\n+\t\t\t);\n+\t\t});\n+\t});\n+\n \tdescribe('hasDotNotationBannedChar', () => {\n \t\tit('should return true for strings with banned characters', () => {\n \t\t\texpect(hasDotNotationBannedChar('1abc')).toBe(true);\n"
+ },
+ "evidence": "## fix(editor): Node references in expressions not updated when the renamed node has quotes\n\napplyAccessPatterns now also matches and emits node names with quotes in their backslash-escaped in-string form, per quote type, so renaming nodes with quotes (e.g. Bob's node) updates $(...), $node[...], $items(...) references; added tests\n\n### What changed\n- 1 source file(s), 1 test file(s), 74 changed lines\n- `packages/workflow/src/node-reference-parser-utils.ts`\n\n### What ran\n- The agent ran the tests 2 time(s) and says: acdc-test on node-reference-parser-utils.test.ts and workflow.test.ts: 182/182 passed. acdc-lint could not run (missing tsgolint executable). acdc-typecheck shows one error in src/expression.ts (EvaluatorConfig 'bridge'), a file I did not touch.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/5; tests that passed before: 49/49\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- Raw (unescaped) matching is kept for backward compatibility with an existing test that uses pre-escaped names containing a backslash; a new name containing quotes is only inserted raw in that legacy case\n- Backslashes in node names are not specially escaped\n- Lint was not run and formatting was done by hand\n- Typecheck error in src/expression.ts is unrelated and I believe it was already failing\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.25\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change handles simple quote-escaping cases but fails the hidden tests involving backslashes in node names, mixed escaped quotes, and new names containing quotes or backslashes. It escapes by trial variants instead of consistently escaping backslashes and quotes, and it also leaves new-name escaping fragile, so the rename is not reliably applied.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0167127
+ }
+}

@@ -1,0 +1,84 @@
+{
+ "task": "n8n-33897",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed it: execution errors now construct correctly when `Error.prototype` is frozen. The new tests pass, but I couldn't confirm they fail without the fix, and lint didn't run.\n\n**Cause.** `ExecutionBaseError`'s constructor did `this.name = this.constructor.name`. When `Error.prototype` is frozen, the inherited `name` property becomes read-only. In strict mode, assigning a property that is read-only on the prototype throws a `TypeError` (the \"override mistake\"), so every class built on `ExecutionBaseError` (node errors, expression errors, workflow operation errors, cancellations) failed to construct. `message` is fine because `super(message)` already creates it on the instance.\n\n**Fix.** In `src/errors/abstract/execution-base.error.ts`, I replaced the assignment with `Object.defineProperty(this, 'name', { value, writable, enumerable, configurable })`. These settings match what the old assignment produced, so serialization doesn't change. Since each error now has its own writable `name`, the later `this.name = …` lines in `WorkflowOperationError` and `SubworkflowOperationError` work without changes.\n\n**Tests.** I added `test/errors/execution-base.error.test.ts`. It checks the property's settings and builds `ExecutionBaseError`, `WorkflowOperationError` and `NodeOperationError` with `Error.prototype.name` made read-only. The test restores the original property afterwards rather than freezing the prototype for good, so other tests aren't affected.\n\n**Checks:**\n- **Tests:** all 6 files / 26 tests under `test/errors` pass. I tried to revert the fix temporarily to see the new tests fail, but that command was blocked, so that is unconfirmed.\n- **Typecheck:** reports 7 errors, all \"Cannot find module\" for packages outside this checkout (`@n8n/utils`, `n8n-workflow`). None are in the files I touched.\n- **Lint:** didn't run, because `tsgolint` isn't installed here.\n\n{\"summary\": \"ExecutionBaseError assigned this.name, which throws a TypeError in strict mode when Error.prototype is frozen, because the inherited name is read-only. I replaced it with Object.defineProperty, using the same writable/enumerable/configurable settings as the old assignment, so subclasses can still reassign name. Added test/errors/execution-base.error.test.ts covering construction with a read-only Error.prototype.name.\", \"verification\": \"acdc-test test/errors: 6 files / 26 tests pass, including the 4 new ones. I couldn't show the new tests fail without the fix because the revert command was blocked. acdc-typecheck: 7 errors, all missing modules from packages not in this checkout, none in the changed files. acdc-lint couldn't run (tsgolint executable missing).\", \"tests_pass\": true, \"risks\": [\"I didn't confirm the new tests fail without the fix; the revert command was blocked\", \"The test makes only Error.prototype.name read-only and restores it afterwards, rather than calling Object.freeze(Error.prototype), so it doesn't cover anything else a real freeze would break\", \"Other Error subclasses that don't extend ExecutionBaseError and assign inherited Error.prototype properties could hit the same problem\", \"Lint wasn't run in this environment\"]}",
+  "cost_usd": 0.19630139999999996,
+  "turns": 14,
+  "tool_calls": 13,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 147396,
+  "tokens_out": 4676,
+  "model": "claude-opus-5-5",
+  "seconds": 89
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 10,
+   "total": 10
+  },
+  "failing": [
+   "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError with a frozen Error.prototype should wrap an ExecutionBaseError cause without writing through the prototype"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 7
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/errors/abstract/execution-base.error.ts",
+   "packages/workflow/test/errors/execution-base.error.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/errors/execution-base.error.test.ts"
+  ],
+  "lines_changed": 68,
+  "reference_lines": 21,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/errors/abstract/execution-base.error.ts b/packages/workflow/src/errors/abstract/execution-base.error.ts\nindex 74b9b8a03..716331110 100644\n--- a/packages/workflow/src/errors/abstract/execution-base.error.ts\n+++ b/packages/workflow/src/errors/abstract/execution-base.error.ts\n@@ -27,7 +27,15 @@ export abstract class ExecutionBaseError extends BaseError {\n \tconstructor(message: string, options: ExecutionBaseErrorOptions = {}) {\n \t\tsuper(message, options);\n \n-\t\tthis.name = this.constructor.name;\n+\t\t// Define `name` as an own property instead of assigning it: if\n+\t\t// `Error.prototype` is frozen, the inherited `name` is non-writable and a\n+\t\t// plain assignment throws in strict mode (the \"override mistake\").\n+\t\tObject.defineProperty(this, 'name', {\n+\t\t\tvalue: this.constructor.name,\n+\t\t\twritable: true,\n+\t\t\tenumerable: true,\n+\t\t\tconfigurable: true,\n+\t\t});\n \t\tthis.timestamp = Date.now();\n \n \t\tconst { cause, errorResponse } = options;\ndiff --git a/packages/workflow/test/errors/execution-base.error.test.ts b/packages/workflow/test/errors/execution-base.error.test.ts\nnew file mode 100644\nindex 000000000..0612e01ba\n--- /dev/null\n+++ b/packages/workflow/test/errors/execution-base.error.test.ts\n@@ -0,0 +1,58 @@\n+import { ExecutionBaseError } from '../../src/errors/abstract/execution-base.error';\n+import { NodeOperationError } from '../../src/errors/node-operation.error';\n+import { WorkflowOperationError } from '../../src/errors/workflow-operation.error';\n+\n+class TestExecutionError extends ExecutionBaseError {}\n+\n+describe('ExecutionBaseError', () => {\n+\tit('should set name to the constructor name as an own property', () => {\n+\t\tconst error = new TestExecutionError('test');\n+\n+\t\texpect(error.name).toBe('TestExecutionError');\n+\t\texpect(Object.getOwnPropertyDescriptor(error, 'name')).toEqual({\n+\t\t\tvalue: 'TestExecutionError',\n+\t\t\twritable: true,\n+\t\t\tenumerable: true,\n+\t\t\tconfigurable: true,\n+\t\t});\n+\t});\n+\n+\tdescribe('when Error.prototype is frozen', () => {\n+\t\tconst original = Object.getOwnPropertyDescriptor(Error.prototype, 'name')!;\n+\n+\t\tbeforeEach(() => {\n+\t\t\t// Simulate a frozen Error.prototype for the `name` property, without\n+\t\t\t// irreversibly freezing the prototype for the rest of the test run.\n+\t\t\tObject.defineProperty(Error.prototype, 'name', { ...original, writable: false });\n+\t\t});\n+\n+\t\tafterEach(() => {\n+\t\t\tObject.defineProperty(Error.prototype, 'name', original);\n+\t\t});\n+\n+\t\tit('should construct execution errors without throwing', () => {\n+\t\t\tconst error = new TestExecutionError('test');\n+\t\t\texpect(error.name).toBe('TestExecutionError');\n+\t\t\texpect(error.message).toBe('test');\n+\t\t});\n+\n+\t\tit('should allow subclasses to reassign name', () => {\n+\t\t\tconst error = new WorkflowOperationError('test');\n+\t\t\texpect(error.name).toBe('WorkflowOperationError');\n+\t\t});\n+\n+\t\tit('should construct node errors', () => {\n+\t\t\tconst node = {\n+\t\t\t\tid: '1',\n+\t\t\t\tname: 'Node',\n+\t\t\t\ttype: 'n8n-nodes-base.noOp',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\tposition: [0, 0] as [number, number],\n+\t\t\t\tparameters: {},\n+\t\t\t};\n+\t\t\tconst error = new NodeOperationError(node, 'boom');\n+\t\t\texpect(error.name).toBe('NodeOperationError');\n+\t\t\texpect(error.message).toBe('boom');\n+\t\t});\n+\t});\n+});\n"
+ },
+ "evidence": "## fix(core): Construct execution errors correctly when Error.prototype is frozen\n\nExecutionBaseError assigned this.name, which throws a TypeError in strict mode when Error.prototype is frozen, because the inherited name is read-only. I replaced it with Object.defineProperty, using the same writable/enumerable/configurable settings as the old assignment, so subclasses can still reassign name. Added test/errors/execution-base.error.test.ts covering construction with a read-only Error.prototype.name.\n\n### What changed\n- 1 source file(s), 1 test file(s), 68 changed lines\n- `packages/workflow/src/errors/abstract/execution-base.error.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test test/errors: 6 files / 26 tests pass, including the 4 new ones. I couldn't show the new tests fail without the fix because the revert command was blocked. acdc-typecheck: 7 errors, all missing modules from packages not in this checkout, none in the changed files. acdc-lint couldn't run (tsgolint executable missing).\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/2; tests that passed before: 10/10\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- I didn't confirm the new tests fail without the fix; the revert command was blocked\n- The test makes only Error.prototype.name read-only and restores it afterwards, rather than calling Object.freeze(Error.prototype), so it doesn't cover anything else a real freeze would break\n- Other Error subclasses that don't extend ExecutionBaseError and assign inherited Error.prototype properties could hit the same problem\n- Lint wasn't run in this environment\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.20\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change fixes the `name` assignment in ExecutionBaseError but leaves WorkflowActivationError assigning `error.constructor` and `error.name` on a fresh Error, which still throws when Error.prototype is frozen. The issue asks for execution errors to be constructed correctly in that case, and wrapping an ExecutionBaseError cause is one of those paths, so it remains broken.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0108287
+ }
+}

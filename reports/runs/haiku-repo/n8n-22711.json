@@ -1,0 +1,82 @@
+{
+ "task": "n8n-22711",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I changed `$fromAI` in `packages/workflow` so that a correct call with a fallback value returns that value instead of throwing, and added a test for it. I could not confirm this is the exact bug in the Linear issue. The issue text wasn't available to me, so the root cause is my reading of the code.\n\n**What I found:** `handleFromAi` in `src/workflow-data-proxy.ts` has three problems:\n- In the no-result-data branch, `inputData.json` lacked optional chaining. When there was no input for the run index, it threw a raw `TypeError` instead of reaching the intended handling.\n- In the result-data branch, `[itemIndex].json` had the same problem when the item was out of range.\n- When no input data was found, the function always threw \"No execution data available\", even when the caller had passed a `defaultValue`.\n\n**Changes:**\n- `packages/workflow/src/workflow-data-proxy.ts`: added `?.` at both lookups, and return `defaultValue` when no placeholder data exists and a default was given. Without a default, the existing error is still thrown.\n- `packages/workflow/test/workflow-data-proxy.test.ts`: added a test that a call with an empty input returns the default, and that the same call without a default throws an `ExpressionError`.\n\n**Verification:**\n- `acdc-test packages/workflow/test/workflow-data-proxy.test.ts`: 112 of 112 passed, including the new test. The file had 111 passing before my change.\n- `acdc-lint`: did not produce a result. It printed `Failed to find tsgolint executable`.\n- `acdc-typecheck`: ran once with its output piped through `tail`, and the output showed nothing. I did not capture its exit code. A later rerun was denied by the permission mode, so I could not confirm it.\n- I did not run the full package test suite.\n\n{\"summary\": \"Fixed $fromAI in packages/workflow so a call with a defaultValue returns it when no input data exists, instead of throwing. Also added optional chaining to the inputData.json and [itemIndex].json lookups so missing data no longer produces a raw TypeError. Root cause is inferred from reading the code; the Linear issue body was not available to confirm the exact reported symptom.\", \"verification\": \"acdc-test on workflow-data-proxy.test.ts: 112/112 passed, including a new test for the default-value and no-data-throws cases. acdc-lint did not run (tsgolint executable missing). acdc-typecheck output was empty and its exit code was not captured; a rerun was denied by permission mode. Full package suite not run.\", \"tests_pass\": true, \"risks\": [\"Behavior change: with a defaultValue and no execution/input data, $fromAI now returns the default instead of throwing 'No execution data available'. Confirm this is the intended behavior.\", \"The root cause is inferred, not reproduced against the Linear issue; check that the reported expression actually goes through this path.\", \"Lint and typecheck were not confirmed; the new long line in the result-data branch may exceed prettier's width and needs a lint run.\", \"The item-index lookup now returns undefined for out-of-range items rather than throwing, which then falls through to the default or the no-data error.\"]}",
+  "cost_usd": 0.01395134,
+  "turns": 19,
+  "tool_calls": 18,
+  "tests_run": 2,
+  "denials": 2,
+  "tokens_in": 318119,
+  "tokens_out": 12687,
+  "model": "claude-haiku-5-5",
+  "seconds": 89
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 110,
+   "total": 110
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 57,
+  "reference_lines": 2,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12987441102537045,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex 9794f66b4..da7ef8d8e 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -1034,14 +1034,16 @@ export class WorkflowDataProxy {\n \n \t\t\tif (!resultData) {\n \t\t\t\tinputData = this.connectionInputData?.[runIndex];\n-\t\t\t\tplaceholdersDataInputData = inputData.json;\n+\t\t\t\tplaceholdersDataInputData = inputData?.json;\n \t\t\t} else {\n \t\t\t\tinputData =\n \t\t\t\t\tthat.runExecutionData?.resultData.runData[that.activeNodeName]?.[runIndex].inputOverride;\n-\t\t\t\tplaceholdersDataInputData = inputData?.[NodeConnectionTypes.AiTool]?.[0]?.[itemIndex].json;\n+\t\t\t\tplaceholdersDataInputData = inputData?.[NodeConnectionTypes.AiTool]?.[0]?.[itemIndex]?.json;\n \t\t\t}\n \n \t\t\tif (!placeholdersDataInputData) {\n+\t\t\t\t// A correct expression with a fallback should not error when no value was provided\n+\t\t\t\tif (defaultValue !== undefined) return defaultValue;\n \t\t\t\tthrow new ExpressionError('No execution data available', {\n \t\t\t\t\trunIndex,\n \t\t\t\t\titemIndex,\ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex f9aadb0d8..fc9ae68cd 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -676,6 +676,57 @@ describe('WorkflowDataProxy', () => {\n \t\t\t// Should return existing values for keys that are present\n \t\t\texpect(proxy.$fromAI('regular_field')).toEqual('regular_value');\n \t\t});\n+\n+\t\ttest('Returns default value instead of erroring when no input data exists for the run', () => {\n+\t\t\tconst workflowWithoutInput: IWorkflowBase = {\n+\t\t\t\tid: '123',\n+\t\t\t\tname: 'test workflow',\n+\t\t\t\tnodes: [\n+\t\t\t\t\t{\n+\t\t\t\t\t\tid: 'aiNode',\n+\t\t\t\t\t\tname: 'AI Node',\n+\t\t\t\t\t\ttype: 'n8n-nodes-base.aiAgent',\n+\t\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\t\tposition: [0, 0],\n+\t\t\t\t\t\tparameters: {},\n+\t\t\t\t\t},\n+\t\t\t\t],\n+\t\t\t\tconnections: {},\n+\t\t\t\tactive: false,\n+\t\t\t\tactiveVersionId: null,\n+\t\t\t\tisArchived: false,\n+\t\t\t\tcreatedAt: new Date(),\n+\t\t\t\tupdatedAt: new Date(),\n+\t\t\t};\n+\n+\t\t\tconst dataProxy = new WorkflowDataProxy(\n+\t\t\t\tnew Workflow({\n+\t\t\t\t\tid: '123',\n+\t\t\t\t\tname: 'test workflow',\n+\t\t\t\t\tnodes: workflowWithoutInput.nodes,\n+\t\t\t\t\tconnections: workflowWithoutInput.connections,\n+\t\t\t\t\tactive: false,\n+\t\t\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\t\t}),\n+\t\t\t\tnull,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'AI Node',\n+\t\t\t\t// No input data for run index 0\n+\t\t\t\t[],\n+\t\t\t\t{},\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t);\n+\n+\t\t\tconst proxy = dataProxy.getDataProxy();\n+\n+\t\t\texpect(proxy.$fromAI('full_name', 'description', 'string', 'default_value')).toEqual(\n+\t\t\t\t'default_value',\n+\t\t\t);\n+\t\t\texpect(() => proxy.$fromAI('full_name')).toThrow(ExpressionError);\n+\t\t});\n \t});\n \n \tdescribe('$rawParameter', () => {\n"
+ },
+ "evidence": "## fix(editor): Fix correct $fromAi expression showing as error\n\nFixed $fromAI in packages/workflow so a call with a defaultValue returns it when no input data exists, instead of throwing. Also added optional chaining to the inputData.json and [itemIndex].json lookups so missing data no longer produces a raw TypeError. Root cause is inferred from reading the code; the Linear issue body was not available to confirm the exact reported symptom.\n\n### What changed\n- 1 source file(s), 1 test file(s), 57 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 2 time(s) and says: acdc-test on workflow-data-proxy.test.ts: 112/112 passed, including a new test for the default-value and no-data-throws cases. acdc-lint did not run (tsgolint executable missing). acdc-typecheck output was empty and its exit code was not captured; a rerun was denied by permission mode. Full package suite not run.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 110/110\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- Behavior change: with a defaultValue and no execution/input data, $fromAI now returns the default instead of throwing 'No execution data available'. Confirm this is the intended behavior.\n- The root cause is inferred, not reproduced against the Linear issue; check that the reported expression actually goes through this path.\n- Lint and typecheck were not confirmed; the new long line in the result-data branch may exceed prettier's width and needs a lint run.\n- The item-index lookup now returns undefined for out-of-range items rather than throwing, which then falls through to the default or the no-data error.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": false,
+  "reason": "The engineer includes the same optional-chaining fix as the merged change, so the crash is resolved and no hidden tests fail. However, it also adds an unrequested behavior change, returning defaultValue instead of throwing when no data is available, which silently alters error semantics beyond the issue's scope, so a careful reviewer would likely push back.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0085627
+ }
+}

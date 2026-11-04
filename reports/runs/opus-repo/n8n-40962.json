@@ -1,0 +1,83 @@
+{
+ "task": "n8n-40962",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed the bug: expressions that mix `??` with a parenthesized `&&` or `||` operand no longer become invalid code once the extension rewrite runs. The new test passes, and typecheck and lint are clean. One older parity test still fails, but it fails without my change too.\n\n**Cause:** `extendTransform` (`src/extensions/expression-extension.ts`) rewrites an expression when it contains an extension call such as `.toUpperCase()`, and optional chains as well. When recast reprints the changed tree it drops the parentheses in `(a || b) ?? c`. That turns it into `a || b ?? c`, which is a SyntaxError (`Unexpected token '||'`).\n\n**Fix:** a small final pass in `extendTransform`, just before printing. Wherever an `&&` or `||` expression sits directly on either side of a `??`, it is wrapped in an explicit parenthesized node, so the printer always writes the parentheses back. Nothing else is touched.\n\n**Test:** added \"Keeps parentheses around && and || operands of ?? when reprinting\" in `test/ExpressionExtensions/expression-extension.test.ts`. It covers the operand on the left and on the right, mixed with optional chains and extension calls. It checks that the output parses (with `esprima-next`) and evaluates three expressions end-to-end. It fails without the fix and passes with it.\n\n**Verification:**\n- `acdc-test test/ExpressionExtensions/ test/expression.test.ts test/native-evaluation-parity.test.ts`: 1823 passed, 1 failed, 2 skipped.\n- The failure is `an own __proto__ key on a whole-value read hands off to the engine`, on the quickjs engine only. I switched my fix off and re-ran it, and it failed the same way, so it isn't caused by this change.\n- `acdc-typecheck` reported no errors, and `acdc-lint` on both changed files reported 0 errors and 0 warnings.\n\n**Left alone:** `usesPolyfilledChain` in `src/expressions/native-evaluation/parser.ts` was a workaround for this bug: it hands such expressions to the engine instead of evaluating them natively. Its comment is now out of date. Removing it would let more expressions run natively, which deserves its own change with parity tests, so I didn't do it here.\n\n{\"summary\": \"Fixed extendTransform (packages/workflow/src/extensions/expression-extension.ts): recast's reprint dropped the parentheses around an && or || operand of ??, giving invalid code like `a || b ?? c` (SyntaxError). A final pass before printing now wraps such operands in an explicit ParenthesizedExpression so the parentheses survive. Added a test that checks the rewritten code parses and that such expressions evaluate correctly.\", \"verification\": \"acdc-test on test/ExpressionExtensions/, test/expression.test.ts and test/native-evaluation-parity.test.ts: 1823 passed, 1 failed, 2 skipped. The new test fails without the fix and passes with it. The one failure (quickjs '__proto__ key on a whole-value read' parity test) also fails with the fix switched off, so it is not caused by this change. acdc-typecheck reported no errors; acdc-lint on both changed files: 0 errors, 0 warnings.\", \"tests_pass\": true, \"risks\": [\"The new pass marks ?? nodes with &&/|| operands as changed, so recast reprints those parts of every transformed expression; whitespace and formatting there may differ from the original (semantics are the same)\", \"usesPolyfilledChain in native-evaluation/parser.ts is now an unneeded workaround with an out-of-date comment; removing it would widen native evaluation and is left for a follow-up\", \"Already-failing quickjs parity test for an own __proto__ key, unrelated to this change\"]}",
+  "cost_usd": 0.5443308,
+  "turns": 28,
+  "tool_calls": 27,
+  "tests_run": 8,
+  "denials": 1,
+  "tokens_in": 527153,
+  "tokens_out": 9427,
+  "model": "claude-opus-5-5",
+  "seconds": 385
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 4,
+   "total": 5
+  },
+  "pass_to_pass": {
+   "passed": 240,
+   "total": 240
+  },
+  "failing": [
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts :: Expression Parser Test newer ES syntax Nullish coalescing with an && or || operand next to an optional chain should print the parentheses once"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/extensions/expression-extension.ts",
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts"
+  ],
+  "lines_changed": 43,
+  "reference_lines": 17,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/extensions/expression-extension.ts b/packages/workflow/src/extensions/expression-extension.ts\nindex 9b2dd1a4c..255cec43c 100644\n--- a/packages/workflow/src/extensions/expression-extension.ts\n+++ b/packages/workflow/src/extensions/expression-extension.ts\n@@ -431,6 +431,27 @@ export const extendTransform = (expression: string): { code: string } | undefine\n \t\t\t},\n \t\t});\n \n+\t\t// recast drops the parentheses around an `&&` or `||` operand of `??`\n+\t\t// when it reprints the node, and mixing them unparenthesized is a\n+\t\t// SyntaxError. Make those parentheses explicit so they survive.\n+\t\tvisit(ast, {\n+\t\t\tvisitLogicalExpression(path) {\n+\t\t\t\tthis.traverse(path);\n+\n+\t\t\t\tif (path.node.operator !== '??') return;\n+\n+\t\t\t\tfor (const side of ['left', 'right'] as const) {\n+\t\t\t\t\tconst operand = path.node[side];\n+\t\t\t\t\tif (\n+\t\t\t\t\t\toperand.type === 'LogicalExpression' &&\n+\t\t\t\t\t\t(operand.operator === '&&' || operand.operator === '||')\n+\t\t\t\t\t) {\n+\t\t\t\t\t\tpath.node[side] = types.builders.parenthesizedExpression(operand);\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t},\n+\t\t});\n+\n \t\treturn print(ast);\n \t} catch (e) {\n \t\treturn;\ndiff --git a/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts b/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\nindex 2361173be..937eff7b4 100644\n--- a/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\n+++ b/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\n@@ -2,6 +2,8 @@\n \n /* eslint-disable n8n-local-rules/no-interpolation-in-regular-string */\n \n+import { parseScript } from 'esprima-next';\n+\n import { evaluate } from './helpers';\n import { ExpressionExtensionError } from '../../src/errors/expression-extension.error';\n import { extendTransform, extend } from '../../src/extensions';\n@@ -186,6 +188,26 @@ describe('Expression Parser', () => {\n );`);\n \t\t});\n \n+\t\ttest('Keeps parentheses around && and || operands of ?? when reprinting', () => {\n+\t\t\tconst cases = [\n+\t\t\t\t'($json.a?.b || $json.c) ?? \"x\".toUpperCase()',\n+\t\t\t\t'($json.a?.b && $json.c) ?? \"x\".toUpperCase()',\n+\t\t\t\t'\"x\".toUpperCase() ?? ($json.a?.b || $json.c)',\n+\t\t\t\t'\"x\".toUpperCase() ?? ($json.a?.b && $json.c)',\n+\t\t\t\t'$json.a?.b ?? ($json.c || \"x\".toUpperCase())',\n+\t\t\t];\n+\t\t\tfor (const expression of cases) {\n+\t\t\t\tconst code = extendTransform(expression)?.code;\n+\t\t\t\texpect(code).toBeDefined();\n+\t\t\t\t// Mixing ?? with an unparenthesized && or || is a SyntaxError\n+\t\t\t\texpect(() => parseScript(code!)).not.toThrow();\n+\t\t\t}\n+\n+\t\t\texpect(evaluate('={{ ({}?.a || false) ?? \"x\".toUpperCase() }}')).toBe(false);\n+\t\t\texpect(evaluate('={{ (null || null) ?? \"x\".toUpperCase() }}')).toBe('X');\n+\t\t\texpect(evaluate('={{ \"x\".toUpperCase() ?? ({}?.a && 1) }}')).toBe('X');\n+\t\t});\n+\n \t\ttest('Optional chaining with undefined argument', () => {\n \t\t\texpect(evaluate('={{ [1, 2, 3, 4]?.sum((undefined)?.test) }}')).toBe(10);\n \t\t});\n"
+ },
+ "evidence": "## fix(core): Keep parentheses around && and || operands of ?? in expressions\n\nFixed extendTransform (packages/workflow/src/extensions/expression-extension.ts): recast's reprint dropped the parentheses around an && or || operand of ??, giving invalid code like `a || b ?? c` (SyntaxError). A final pass before printing now wraps such operands in an explicit ParenthesizedExpression so the parentheses survive. Added a test that checks the rewritten code parses and that such expressions evaluate correctly.\n\n### What changed\n- 1 source file(s), 1 test file(s), 43 changed lines\n- `packages/workflow/src/extensions/expression-extension.ts`\n\n### What ran\n- The agent ran the tests 8 time(s) and says: acdc-test on test/ExpressionExtensions/, test/expression.test.ts and test/native-evaluation-parity.test.ts: 1823 passed, 1 failed, 2 skipped. The new test fails without the fix and passes with it. The one failure (quickjs '__proto__ key on a whole-value read' parity test) also fails with the fix switched off, so it is not caused by this change. acdc-typecheck reported no errors; acdc-lint on both changed files: 0 errors, 0 warnings.\n- Type check: passes; lint: passes\n- Tests for the issue: 4/5; tests that passed before: 240/240\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- The new pass marks ?? nodes with &&/|| operands as changed, so recast reprints those parts of every transformed expression; whitespace and formatting there may differ from the original (semantics are the same)\n- usesPolyfilledChain in native-evaluation/parser.ts is now an unneeded workaround with an out-of-date comment; removing it would widen native evaluation and is left for a follow-up\n- Already-failing quickjs parity test for an own __proto__ key, unrelated to this change\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.54\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "tests_too_strict",
+  "reviewer_would_accept": true,
+  "reason": "Wrapping the `&&`/`||` operand in a ParenthesizedExpression keeps the parentheses, so the `??` mix stays valid JS. With an optional chain, recast adds its own parentheses on top, giving a redundant double pair. The output is semantically identical but fails the hidden test's exact string match. This is a cosmetic difference, though a reviewer might ask to use `extra.parenthesized` as the merged fix does.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0145747
+ }
+}

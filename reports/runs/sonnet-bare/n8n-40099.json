@@ -1,0 +1,84 @@
+{
+ "task": "n8n-40099",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I changed the native-evaluation size pre-check so `join` and `toSorted` are bounded by element content, not element count. The 402 tests in the native-evaluation and expression-compatibility files pass. I didn't confirm the new `toSorted` corpus entry actually triggers the engine fallback, and the lint check didn't run.\n\n**Cause:** `assertPreflightSize` in `evaluator.ts` decided whether to bail to the engine from a size estimate.\n- For `join`, it built the string of every element with `toStr` before comparing against the cap, with no early exit. Nested or shared-reference arrays could do unbounded work on the main thread.\n- `toSorted` was only bounded by array length. Its default comparator stringifies every element, so large elements cost far more than the count suggests.\n\n**Fix:**\n- I added `stringifiedSize(array, budget)`, which computes the joined length without allocating strings. It treats nullish elements as empty, joins nested arrays with commas, and stops once the running total passes the budget.\n- `join` now uses it, and so does `toSorted`.\n- I added a corpus entry, `$json.item.manyBig.toSorted()`, in `test/native-evaluation-corpus.ts`. It should fall back to the engine like the existing `join('')` entry.\n\n**Not run cleanly:**\n- `acdc-typecheck` reports one error, in `src/nodes-api-version.ts(49,6)`, a file I didn't touch. It looks unrelated.\n- `acdc-lint` failed with a module-resolution error, so lint did not run.\n\n{\"summary\": \"Native array pre-flight size check now bounds join and toSorted by stringified element content, using an allocation-free stringifiedSize helper with early exit. Previously join allocated every element string before checking the cap, and toSorted was only bounded by array length. Added a corpus entry for manyBig.toSorted().\", \"verification\": \"acdc-test on native-evaluation-corpus-coverage, native-evaluation and expression-compatibility: 4 files, 402 tests passed. acdc-typecheck reports one error in src/nodes-api-version.ts, which I did not touch. acdc-lint failed with a module-resolution error, so lint did not run.\", \"tests_pass\": true, \"risks\": [\"The new toSorted corpus entry relies on the existing manyBig fixture. I did not confirm it actually triggers the fallback.\", \"stringifiedSize recurses into nested arrays; very deep nesting could use stack, though the budget stops it early.\", \"stringifiedSize uses String() on non-array elements, so very large primitives are still stringified once, as before.\", \"Lint was not run because of an environment error.\"]}",
+  "cost_usd": 0.1773982,
+  "turns": 18,
+  "tool_calls": 17,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 246269,
+  "tokens_out": 5826,
+  "model": "claude-sonnet-5-5",
+  "seconds": 108
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 188,
+   "total": 188
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards join and toSorted hand nested elements to the engine",
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards concat is bounded by the content it references"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-corpus.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-corpus.ts"
+  ],
+  "lines_changed": 32,
+  "reference_lines": 74,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.21726788473254607,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 757b17563..3d32009f5 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -194,10 +194,11 @@ function assertPreflightSize(receiver: unknown, method: string, args: unknown[])\n \t\t// Only an undefined separator means \",\"; null joins with \"null\".\n \t\tconst separator = args[0] === undefined ? ',' : toStr(args[0]);\n \t\tupperBound = separator.length * Math.max(receiver.length - 1, 0);\n-\n-\t\tfor (const element of receiver) {\n-\t\t\tupperBound += toStr(element ?? '').length;\n-\t\t}\n+\t\tupperBound += stringifiedSize(receiver, MAX_RESULT_LENGTH - upperBound);\n+\t} else if (method === 'toSorted' && isArray(receiver)) {\n+\t\t// The default comparator stringifies every element, so the work scales\n+\t\t// with element content, not element count.\n+\t\tupperBound = stringifiedSize(receiver, MAX_RESULT_LENGTH);\n \t}\n \n \tif (upperBound > MAX_RESULT_LENGTH) {\n@@ -205,6 +206,27 @@ function assertPreflightSize(receiver: unknown, method: string, args: unknown[])\n \t}\n }\n \n+/**\n+ * Length of the strings `array.join(',')` would build from the elements\n+ * (nullish elements are empty, nested arrays join with \",\"), computed without\n+ * allocating them. Stops once the running total passes `budget`, so a nested\n+ * or shared-reference structure cannot cost more than the cap.\n+ */\n+function stringifiedSize(array: unknown[], budget: number): number {\n+\tlet size = 0;\n+\tfor (const element of array) {\n+\t\tif (size > budget) break;\n+\t\tif (element === null || element === undefined) continue;\n+\t\tif (isArray(element)) {\n+\t\t\tsize += element.length > 0 ? element.length - 1 : 0;\n+\t\t\tsize += stringifiedSize(element, budget - size);\n+\t\t} else {\n+\t\t\tsize += toStr(element).length;\n+\t\t}\n+\t}\n+\treturn size;\n+}\n+\n /**\n  * Element count of `array.flat(depth)`, stopping early once past the cap\n  * (a nested structure can flatten to far more elements than the outer\ndiff --git a/packages/workflow/test/native-evaluation-corpus.ts b/packages/workflow/test/native-evaluation-corpus.ts\nindex 84c2ac033..e510439cc 100644\n--- a/packages/workflow/test/native-evaluation-corpus.ts\n+++ b/packages/workflow/test/native-evaluation-corpus.ts\n@@ -188,6 +188,8 @@ export const RUNTIME_BAILOUT_CORPUS: string[] = [\n \t'={{ $json.item.hugeArr.at(0) }}',\n \t// join('') is bounded by the elements, not the separator.\n \t\"={{ $json.item.manyBig.join('') }}\",\n+\t// toSorted() stringifies every element, so it is bounded the same way.\n+\t'={{ $json.item.manyBig.toSorted() }}',\n \t// Several chunks obey the same limit as one.\n \t'={{ $json.item.bigger }}{{ $json.item.bigger }}{{ $json.item.bigger }}{{ $json.item.bigger }}{{ $json.item.bigger }}{{ $json.item.bigger }}{{ $json.item.bigger }}',\n \t\"={{ $json.item.bigger.replaceAll('y') }}\",\n"
+ },
+ "evidence": "## fix(core): Bound native array methods by element content, not count (no-changelog)\n\nNative array pre-flight size check now bounds join and toSorted by stringified element content, using an allocation-free stringifiedSize helper with early exit. Previously join allocated every element string before checking the cap, and toSorted was only bounded by array length. Added a corpus entry for manyBig.toSorted().\n\n### What changed\n- 1 source file(s), 1 test file(s), 32 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test on native-evaluation-corpus-coverage, native-evaluation and expression-compatibility: 4 files, 402 tests passed. acdc-typecheck reports one error in src/nodes-api-version.ts, which I did not touch. acdc-lint failed with a module-resolution error, so lint did not run.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/2; tests that passed before: 188/188\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (22% chance of a revert or follow-up fix, from n8n's history)\n- The new toSorted corpus entry relies on the existing manyBig fixture. I did not confirm it actually triggers the fallback.\n- stringifiedSize recurses into nested arrays; very deep nesting could use stack, though the budget stops it early.\n- stringifiedSize uses String() on non-array elements, so very large primitives are still stringified once, as before.\n- Lint was not run because of an environment error.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.18\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change bounds join and toSorted by stringified content size, but it still runs them natively on nested arrays instead of handing off to the engine, and it leaves concat unbounded by content, so N arguments referencing one large string still multiply. The issue asked for native array methods to be bounded by element content, and concat is the case that most clearly needs it, so the fix covers only part of that.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0161287
+ }
+}

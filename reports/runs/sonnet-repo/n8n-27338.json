@@ -1,0 +1,84 @@
+{
+ "task": "n8n-27338",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I made a one-line fix, but I'm not sure it's the cause of the issue, and I didn't confirm that my new test fails without the fix.\n\n**What I changed**\n- **Fix:** In `getPairedItem` (`packages/workflow/src/workflow-data-proxy.ts`), `results.every(r => !r.ok)` is true for an empty array. When the walk back through the paired items finds no source to follow, the code then throws `results[0].error` on an empty array, which is a `TypeError`. That happens when an intermediate node has `source: []`, as pinned nodes do. I added `results.length > 0 &&`. The empty case now reaches the existing `createNoConnectionError` branch just below, so the user gets a proper `ExpressionError`.\n- **Test:** I added a test in `test/workflow-data-proxy.test.ts`. It has `A → B(pinned, with a pairedItem) → C` in manual mode, and `$('A').item` is evaluated from C. It expects an `ExpressionError`.\n\n**What I ran**\n- `acdc-test test/workflow-data-proxy.test.ts`: 145 of 145 tests pass.\n- `acdc-typecheck`: one error, in `src/expression.ts(218)` (`'bridge' does not exist in type 'EvaluatorConfig'`). I didn't touch that file.\n- `acdc-lint`: it couldn't run because `tsgolint` isn't installed here.\n\n{\"summary\": \"In getPairedItem, an empty results array made `results.every(...)` true, so the code threw `results[0].error` on an empty array (a TypeError) when the ancestry walk had no usable source, e.g. a pinned intermediate node with `source: []`. Added a `results.length > 0` guard so the existing no-connection ExpressionError is thrown instead, plus a regression test. This is my best reading of the issue, not a confirmed root cause.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 145/145 pass. acdc-typecheck reports one error in src/expression.ts(218) ('bridge' not in EvaluatorConfig), in a file I didn't touch. acdc-lint could not run because tsgolint is missing. I did not run the new test with the fix reverted, so I haven't shown it fails without the fix.\", \"tests_pass\": true, \"risks\": [\"Root cause is a best guess; the issue text was not specific and the reproduction is a constructed pinned-intermediate scenario\", \"The new test was not confirmed to fail without the fix\", \"Lint was not run\", \"Typecheck has an error in src/expression.ts that I did not investigate or touch\"]}",
+  "cost_usd": 0.22274979999999997,
+  "turns": 21,
+  "tool_calls": 20,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 335763,
+  "tokens_out": 7994,
+  "model": "claude-sonnet-5-5",
+  "seconds": 113
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 311,
+   "total": 311
+  },
+  "failing": [
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy Partial execution: $() referencing executed node from unexecuted active node $(\"Edit\").item.json.test should resolve when the referenced node was executed"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 75,
+  "reference_lines": 18,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex 1e70d6d93..5bdd20518 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -1015,7 +1015,7 @@ export class WorkflowDataProxy {\n \t\t\t\t}\n \t\t\t});\n \n-\t\t\tif (results.every((result) => !result.ok)) {\n+\t\t\tif (results.length > 0 && results.every((result) => !result.ok)) {\n \t\t\t\tthrow results[0].error;\n \t\t\t}\n \ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex 4cac88b2c..a60e966f3 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -801,6 +801,79 @@ describe('WorkflowDataProxy', () => {\n \t\t});\n \t});\n \n+\tdescribe('Pinned intermediate node with paired items', () => {\n+\t\ttest('$(\"NodeName\").item throws an ExpressionError instead of a TypeError', () => {\n+\t\t\tconst node = (name: string): INode => ({\n+\t\t\t\tid: name,\n+\t\t\t\tname,\n+\t\t\t\ttype: 'n8n-nodes-base.set',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\tposition: [0, 0],\n+\t\t\t\tparameters: {},\n+\t\t\t});\n+\t\t\tconst main = (to: string) => ({ main: [[{ node: to, type: 'main' as const, index: 0 }]] });\n+\t\t\tconst workflow = {\n+\t\t\t\tnodes: [node('A'), node('B'), node('C')],\n+\t\t\t\tconnections: { A: main('B'), B: main('C') },\n+\t\t\t\tpinData: { B: [{ foo: 1 }] },\n+\t\t\t} as unknown as IWorkflowBase;\n+\t\t\tconst run = {\n+\t\t\t\tdata: createRunExecutionData({\n+\t\t\t\t\tresultData: {\n+\t\t\t\t\t\trunData: {\n+\t\t\t\t\t\t\tA: [\n+\t\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\t\tstartTime: 0,\n+\t\t\t\t\t\t\t\t\texecutionTime: 0,\n+\t\t\t\t\t\t\t\t\texecutionIndex: 0,\n+\t\t\t\t\t\t\t\t\tsource: [],\n+\t\t\t\t\t\t\t\t\tdata: { main: [[{ json: { a: 1 } }]] },\n+\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\tC: [\n+\t\t\t\t\t\t\t\t{\n+\t\t\t\t\t\t\t\t\tstartTime: 0,\n+\t\t\t\t\t\t\t\t\texecutionTime: 0,\n+\t\t\t\t\t\t\t\t\texecutionIndex: 1,\n+\t\t\t\t\t\t\t\t\tsource: [{ previousNode: 'B' }],\n+\t\t\t\t\t\t\t\t\tdata: { main: [[{ json: { c: 1 }, pairedItem: { item: 0 } }]] },\n+\t\t\t\t\t\t\t\t},\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t}),\n+\t\t\t} as unknown as IRun;\n+\t\t\t// Pin data items carry a pairedItem, but a pinned node has no source to follow\n+\t\t\tconst connectionInputData = [{ json: { c: 1 }, pairedItem: { item: 0 } }];\n+\t\t\tconst proxy = new WorkflowDataProxy(\n+\t\t\t\tnew Workflow({\n+\t\t\t\t\tid: '123',\n+\t\t\t\t\tname: 'test workflow',\n+\t\t\t\t\tnodes: workflow.nodes,\n+\t\t\t\t\tconnections: workflow.connections,\n+\t\t\t\t\tactive: false,\n+\t\t\t\t\tnodeTypes: Helpers.NodeTypes(),\n+\t\t\t\t\tpinData: { B: [{ json: { foo: 1 }, pairedItem: { item: 0 } }] },\n+\t\t\t\t}),\n+\t\t\t\trun.data,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'C',\n+\t\t\t\tconnectionInputData,\n+\t\t\t\t{},\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t\t{\n+\t\t\t\t\tdata: { main: [connectionInputData] },\n+\t\t\t\t\tnode: workflow.nodes[2],\n+\t\t\t\t\tsource: { main: [{ previousNode: 'B' }] },\n+\t\t\t\t},\n+\t\t\t).getDataProxy();\n+\n+\t\t\texpect(() => proxy.$('A').item).toThrowError(ExpressionError);\n+\t\t});\n+\t});\n+\n \tdescribe('Partial data', () => {\n \t\tconst fixture = loadFixture('partial_data');\n \n"
+ },
+ "evidence": "## fix(core): Resolve $().item expressions in partial executions\n\nIn getPairedItem, an empty results array made `results.every(...)` true, so the code threw `results[0].error` on an empty array (a TypeError) when the ancestry walk had no usable source, e.g. a pinned intermediate node with `source: []`. Added a `results.length > 0` guard so the existing no-connection ExpressionError is thrown instead, plus a regression test. This is my best reading of the issue, not a confirmed root cause.\n\n### What changed\n- 1 source file(s), 1 test file(s), 75 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 145/145 pass. acdc-typecheck reports one error in src/expression.ts(218) ('bridge' not in EvaluatorConfig), in a file I didn't touch. acdc-lint could not run because tsgolint is missing. I did not run the new test with the fix reverted, so I haven't shown it fails without the fix.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 0/1; tests that passed before: 311/311\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- Root cause is a best guess; the issue text was not specific and the reproduction is a constructed pinned-intermediate scenario\n- The new test was not confirmed to fail without the fix\n- Lint was not run\n- Typecheck has an error in src/expression.ts that I did not investigate or touch\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.22\n",
+ "judge": {
+  "verdict": "wrong",
+  "cause": "wrong_cause",
+  "reviewer_would_accept": false,
+  "reason": "The engineer only added a guard (results.length > 0) around an unrelated error-throwing path at line ~1018, and never added the fallback to the referenced node's run data in the $().item resolution when the active node hasn't run. The partial-execution case still fails to resolve.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0086767
+ }
+}

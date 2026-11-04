@@ -1,0 +1,86 @@
+{
+ "task": "n8n-21534",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed a bug where wildcard domain rules matched hosts they shouldn't. The tests pass. The typecheck and lint results are unclear (details below).\n\n**Cause:** in `isDomainAllowed` (`packages/workflow/src/utils.ts:385`), a rule like `*.example.com` was checked with `hostname.endsWith('example.com')`. That has no dot boundary, so any host ending in those characters passed, such as `evilexample.com` or `sub.evilexample.com`. That gets around the allow-list.\n\n**Fix:** a host now matches a wildcard rule only if it equals the domain exactly or ends with `.example.com`. Nothing else in the function changed.\n\n**Behaviour choice:** the exact-match part means `*.example.com` now also allows the bare domain `example.com`. Before, it allowed it only by accident, through the faulty check. I kept it so existing setups don't start blocking that host, and added a test for it. If wildcards should cover subdomains only, it's a one-line change.\n\n**Tests** (in `test/utils.test.ts`):\n- `evilexample.com` and `sub.evilexample.com` are now rejected for `*.example.com`.\n- `example.com` is allowed for `*.example.com`.\n\n**Verification:**\n- `acdc-test test/utils.test.ts`: 77 tests passed, including the new ones.\n- `acdc-typecheck`: I ran it in a combined command that only showed the last few lines of output, and nothing came back. That points to a clean result, but I didn't see an exit code. A follow-up run to check it was denied by the permission settings.\n- `acdc-lint`: didn't actually lint anything. It stopped with \"Failed to find tsgolint executable\", which is an environment problem, not a code issue.\n\n{\"summary\": \"Fixed wildcard matching in isDomainAllowed (packages/workflow/src/utils.ts). `*.example.com` used a plain endsWith('example.com'), so lookalike hosts such as `evilexample.com` passed the allow-list. A host now matches only if it equals the domain or ends with '.example.com'. Added tests for the rejected lookalikes and for the bare domain still being allowed.\", \"verification\": \"acdc-test test/utils.test.ts: 77/77 passed. acdc-typecheck showed no output (likely clean, but I didn't see the exit code and a rerun was denied). acdc-lint did not run: it failed with 'Failed to find tsgolint executable' (environment problem).\", \"tests_pass\": true, \"risks\": [\"Policy choice: `*.example.com` also allows the bare domain example.com, matching what happened before. Remove the `hostname === domainSuffix` check if wildcards should cover subdomains only.\", \"Typecheck not clearly confirmed and lint did not run; both should be rerun in CI.\", \"Allowed-domain entries are still compared case-sensitively, while URL hostnames are lowercased. This is unchanged, and it only causes extra blocking, not bypasses.\"]}",
+  "cost_usd": 0.12914219999999998,
+  "turns": 8,
+  "tool_calls": 7,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 73300,
+  "tokens_out": 2814,
+  "model": "claude-opus-5-5",
+  "seconds": 54
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 3,
+   "total": 6
+  },
+  "pass_to_pass": {
+   "passed": 163,
+   "total": 163
+  },
+  "failing": [
+   "packages/workflow/test/utils.test.ts :: isDomainAllowed with wildcard domains should not allow base domain with wildcard alone",
+   "packages/workflow/test/utils.test.ts :: isDomainAllowed edge cases should be case-insensitive for domains",
+   "packages/workflow/test/utils.test.ts :: isDomainAllowed edge cases should handle trailing dots in hostnames"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/utils.ts",
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "lines_changed": 24,
+  "reference_lines": 20,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/utils.ts b/packages/workflow/src/utils.ts\nindex f3638e9a2..4d629eb07 100644\n--- a/packages/workflow/src/utils.ts\n+++ b/packages/workflow/src/utils.ts\n@@ -382,7 +382,8 @@ export function isDomainAllowed(\n \t\t\t// Handle wildcard domains (*.example.com)\n \t\t\tif (allowedDomain.startsWith('*.')) {\n \t\t\t\tconst domainSuffix = allowedDomain.substring(2); // Remove the *. part\n-\t\t\t\tif (hostname.endsWith(domainSuffix)) {\n+\t\t\t\t// Require a dot boundary so that e.g. \"evilexample.com\" does not match \"*.example.com\"\n+\t\t\t\tif (hostname === domainSuffix || hostname.endsWith(`.${domainSuffix}`)) {\n \t\t\t\t\treturn true;\n \t\t\t\t}\n \t\t\t}\ndiff --git a/packages/workflow/test/utils.test.ts b/packages/workflow/test/utils.test.ts\nindex c948a3fe4..0ff372241 100644\n--- a/packages/workflow/test/utils.test.ts\n+++ b/packages/workflow/test/utils.test.ts\n@@ -541,6 +541,27 @@ describe('isDomainAllowed', () => {\n \t\t\t\t}),\n \t\t\t).toBe(false);\n \t\t});\n+\n+\t\tit('should block domains that only share a suffix with the wildcard domain', () => {\n+\t\t\texpect(\n+\t\t\t\tisDomainAllowed('https://evilexample.com', {\n+\t\t\t\t\tallowedDomains: '*.example.com',\n+\t\t\t\t}),\n+\t\t\t).toBe(false);\n+\t\t\texpect(\n+\t\t\t\tisDomainAllowed('https://sub.evilexample.com', {\n+\t\t\t\t\tallowedDomains: '*.example.com',\n+\t\t\t\t}),\n+\t\t\t).toBe(false);\n+\t\t});\n+\n+\t\tit('should allow the apex domain with wildcards', () => {\n+\t\t\texpect(\n+\t\t\t\tisDomainAllowed('https://example.com', {\n+\t\t\t\t\tallowedDomains: '*.example.com',\n+\t\t\t\t}),\n+\t\t\t).toBe(true);\n+\t\t});\n \t});\n \n \tdescribe('edge cases', () => {\n"
+ },
+ "evidence": "## fix: Improve domain validation\n\nFixed wildcard matching in isDomainAllowed (packages/workflow/src/utils.ts). `*.example.com` used a plain endsWith('example.com'), so lookalike hosts such as `evilexample.com` passed the allow-list. A host now matches only if it equals the domain or ends with '.example.com'. Added tests for the rejected lookalikes and for the bare domain still being allowed.\n\n### What changed\n- 1 source file(s), 1 test file(s), 24 changed lines\n- `packages/workflow/src/utils.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/utils.test.ts: 77/77 passed. acdc-typecheck showed no output (likely clean, but I didn't see the exit code and a rerun was denied). acdc-lint did not run: it failed with 'Failed to find tsgolint executable' (environment problem).\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 3/6; tests that passed before: 163/163\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- Policy choice: `*.example.com` also allows the bare domain example.com, matching what happened before. Remove the `hostname === domainSuffix` check if wildcards should cover subdomains only.\n- Typecheck not clearly confirmed and lint did not run; both should be rerun in CI.\n- Allowed-domain entries are still compared case-sensitively, while URL hostnames are lowercased. This is unchanged, and it only causes extra blocking, not bypasses.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.13\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change fixes the dot-boundary bypass (evilexample.com matching *.example.com), but 'Improve domain validation' also implies case-insensitive matching and trailing-dot normalization, which are not handled. It also explicitly allows the base domain via hostname === domainSuffix, so '*.example.com' still matches 'example.com', which the merged fix rejects.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0097367
+ }
+}

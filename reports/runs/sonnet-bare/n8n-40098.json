@@ -1,0 +1,81 @@
+{
+ "task": "n8n-40098",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`replace()` is now bounded the same way as `replaceAll()` in native expression evaluation. The tests pass, but the type-check reported an error I didn't touch, and lint didn't run.\n\n**Cause:** the size pre-flight in `assertPreflightSize` (`evaluator.ts`) only covered `replaceAll`. `replace` is allowed by the grammar, so something like `big.replace('', filler)` or a `$`` replacement skipped the bound and the `$` fallback.\n\n**Fix:** the pre-flight branch now matches both `replace` and `replaceAll`. I added two `replace` cases to the runtime-bailout corpus in `test/native-evaluation-corpus.ts`: `big.replace('', filler)` and `name.replace('o', '$`')`. I first added a plain `replace('o', '0')` case too, but it is handled natively rather than bailing out, so I removed it.\n\n**Checks:**\n- The parity and corpus-coverage tests pass (4 files, 366 tests).\n- `acdc-typecheck` reports `src/nodes-api-version.ts(49,6): error TS2365`, in a file I didn't touch. I didn't confirm it fails the same way without my change.\n- `acdc-lint` crashed with a Node module-loader stack trace, so the changed files were not linted.\n\n{\"summary\": \"assertPreflightSize only applied its output-size bound and '$'-pattern engine fallback to replaceAll; extended it to replace too, and added replace() cases (empty-pattern with large filler, '$`' replacement) to the runtime-bailout corpus.\", \"verification\": \"acdc-test on native-evaluation-parity and native-evaluation-corpus-coverage tests: 4 files, 366 tests passed. acdc-typecheck reported TS2365 in src/nodes-api-version.ts, a file I did not touch. acdc-lint crashed with a module-loader stack trace, so the changed files were not linted.\", \"tests_pass\": true, \"risks\": [\"replace() replaces only the first match, so the (receiver+1)*(replacement+1) bound is looser than needed. It may send some borderline-large replace calls to the engine unnecessarily, but never lets one through unbounded.\", \"acdc-typecheck reported an error in src/nodes-api-version.ts; I did not check whether it is pre-existing.\", \"acdc-lint did not run, so the changes are unlinted.\"]}",
+  "cost_usd": 0.1264157,
+  "turns": 15,
+  "tool_calls": 14,
+  "tests_run": 2,
+  "denials": 1,
+  "tokens_in": 152205,
+  "tokens_out": 3391,
+  "model": "claude-sonnet-5-5",
+  "seconds": 55
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 180,
+   "total": 180
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-corpus.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-corpus.ts"
+  ],
+  "lines_changed": 5,
+  "reference_lines": 18,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1973076140726953,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 298451317..355203f6d 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -175,7 +175,7 @@ function assertPreflightSize(receiver: unknown, method: string, args: unknown[])\n \t} else if (method === 'flat' && isArray(receiver)) {\n \t\tconst depth = args.length === 0 ? 1 : toNum(args[0]);\n \t\tupperBound = flatSize(receiver, depth);\n-\t} else if (method === 'replaceAll' && typeof receiver === 'string') {\n+\t} else if ((method === 'replace' || method === 'replaceAll') && typeof receiver === 'string') {\n \t\t// A missing replacement inserts the string \"undefined\".\n \t\tconst replacement = args.length < 2 ? 'undefined' : toStr(args[1]);\n \ndiff --git a/packages/workflow/test/native-evaluation-corpus.ts b/packages/workflow/test/native-evaluation-corpus.ts\nindex 6ff2dacfd..036af23cf 100644\n--- a/packages/workflow/test/native-evaluation-corpus.ts\n+++ b/packages/workflow/test/native-evaluation-corpus.ts\n@@ -173,6 +173,9 @@ export const RUNTIME_BAILOUT_CORPUS: string[] = [\n \t\"={{ $json.item.big.replaceAll('', $json.item.filler) }}\",\n \t// `$\\`` splices the text before each match into the result.\n \t\"={{ $json.item.name.replaceAll('o', '$`') }}\",\n+\t// replace() is bounded like replaceAll().\n+\t\"={{ $json.item.big.replace('', $json.item.filler) }}\",\n+\t\"={{ $json.item.name.replace('o', '$`') }}\",\n \t// A receiver above MAX_RESULT_LENGTH is the engine's work, whatever the\n \t// method. (concat is bounded the same way, by receiver plus arguments; a\n \t// corpus entry would make quickjs marshal a million-element result.)\n"
+ },
+ "evidence": "## fix(core): Bound replace() like replaceAll() in native expression evaluation (no-changelog)\n\nassertPreflightSize only applied its output-size bound and '$'-pattern engine fallback to replaceAll; extended it to replace too, and added replace() cases (empty-pattern with large filler, '$`' replacement) to the runtime-bailout corpus.\n\n### What changed\n- 1 source file(s), 1 test file(s), 5 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 2 time(s) and says: acdc-test on native-evaluation-parity and native-evaluation-corpus-coverage tests: 4 files, 366 tests passed. acdc-typecheck reported TS2365 in src/nodes-api-version.ts, a file I did not touch. acdc-lint crashed with a module-loader stack trace, so the changed files were not linted.\n- Type check: passes; lint: passes\n- Tests for the issue: 1/1; tests that passed before: 180/180\n\n### Risks that remain\n- Change risk: medium (20% chance of a revert or follow-up fix, from n8n's history)\n- replace() replaces only the first match, so the (receiver+1)*(replacement+1) bound is looser than needed. It may send some borderline-large replace calls to the engine unnecessarily, but never lets one through unbounded.\n- acdc-typecheck reported an error in src/nodes-api-version.ts; I did not check whether it is pre-existing.\n- acdc-lint did not run, so the changes are unlinted.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.13\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change applies the existing replaceAll preflight size check, including the `$` fallback, to replace(), which is what the issue asks for, and no hidden test fails. The bound is looser than the merged fix's `receiver.length + replacement.length` for replace(), and any `$` falls back instead of only the expanding tokens. Both choices err toward safety, so the cost is some needless rejections or fallbacks on very large inputs.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.006756799999999999
+ }
+}

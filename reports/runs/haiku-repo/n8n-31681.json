@@ -1,0 +1,85 @@
+{
+ "task": "n8n-31681",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I changed the code and added a test, but I could not run either. Bash was denied in this session, so I had no way to run `acdc-test`, `acdc-typecheck`, `acdc-lint`, or `git diff`.\n\n**Cause:** In `getNodeParameters` (`packages/workflow/src/node-helpers.ts`, around line 823), any field marked `noDataExpression` has its leading `=` removed. For a `$fromAI` placeholder like `={{ $fromAI('resource', ...) }}`, that leaves `{{ $fromAI(...) }}` as plain text. The placeholder is no longer an expression, so the AI tool never fills it in.\n\n**Change:**\n- `node-helpers.ts`: the prefix is now stripped only when the value is an expression that does not contain a `$fromAI(` call (case-insensitive regex). Other expressions on these fields are stripped as before.\n- `node-helpers.test.ts`: added \"should keep $fromAI placeholders intact when noDataExpression is true\", which asserts the `={{ $fromAI(...) }}` value comes back unchanged. The existing noDataExpression tests are untouched.\n\n**Not verified:** I haven't confirmed that this matches the Linear issue's exact repro, since I could only read the code. The new test and the existing `noDataExpression` tests have not been run, and there is no typecheck or lint result.\n\nPlease run `acdc-test packages/workflow/test/node-helpers.test.ts`, `acdc-typecheck`, and `acdc-lint` on the two changed files.\n\n**For review:**\n- The check is a regex on the raw string, so a non-placeholder value that merely mentions `$fromAI(` would also keep its `=` prefix. The existing `isFromAIOnlyExpression` helper in `from-ai-parse-utils.ts` is stricter, but I didn't use it because it only accepts a single standalone `$fromAI` call.\n- Fields that are not `noDataExpression` are unaffected.\n\n```json\n{\"summary\": \"On noDataExpression fields, getNodeParameters stripped the leading '=' from every expression, turning a $fromAI placeholder into literal text the AI tool could not fill. It now keeps the '=' when the value contains a $fromAI( call. Added a regression test in node-helpers.test.ts.\", \"verification\": \"Not run: Bash was denied in this session, so acdc-test, acdc-typecheck, acdc-lint, and git diff could not execute. Changes were checked by reading the code only.\", \"tests_pass\": false, \"risks\": [\"Tests, typecheck, and lint have not been run; the new test is unverified.\", \"The fix is a regex on the raw string, so any non-placeholder value containing '$fromAI(' also keeps its '=' prefix.\", \"Confirm this matches the reported repro in the Linear issue; the root cause was inferred from the code, not reproduced.\"]}\n```",
+  "cost_usd": 0.01044204,
+  "turns": 14,
+  "tool_calls": 13,
+  "tests_run": 0,
+  "denials": 1,
+  "tokens_in": 231910,
+  "tokens_out": 6113,
+  "model": "claude-haiku-5-5",
+  "seconds": 51
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 2,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 326,
+   "total": 328
+  },
+  "failing": [
+   "packages/workflow/test/node-helpers.test.ts :: NodeHelpers getNodeParameters - noDataExpression handling $fromAI placeholder carve-out still strips $fromAI() concatenated with another expression",
+   "packages/workflow/test/node-helpers.test.ts :: NodeHelpers getNodeParameters - noDataExpression handling $fromAI placeholder carve-out still strips $fromAI() with an interpolated value in its argument"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 59,
+  "reference_lines": 4,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1299305481175214,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": false,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex 20b2f2606..c284a247f 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -820,10 +820,12 @@ export function getNodeParameters(\n \t\t\t\tcontinue;\n \t\t\t}\n \n-\t\t\t// Strip expression prefix if noDataExpression is true\n+\t\t\t// Strip expression prefix if noDataExpression is true.\n+\t\t\t// $fromAI placeholders must stay expressions so the AI tool can fill them in,\n+\t\t\t// so their prefix is kept.\n \t\t\tif (nodeProperties.noDataExpression && nodeParameters[nodeProperties.name] !== undefined) {\n \t\t\t\tconst value = nodeParameters[nodeProperties.name];\n-\t\t\t\tif (isExpression(value)) {\n+\t\t\t\tif (isExpression(value) && !/\\$fromai\\s*\\(/i.test(value)) {\n \t\t\t\t\tnodeParameters[nodeProperties.name] = value.slice(1);\n \t\t\t\t\tnodeParametersFull[nodeProperties.name] = nodeParameters[nodeProperties.name];\n \t\t\t\t}\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex cc7fa7f93..de0f93860 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -6576,6 +6576,59 @@ describe('NodeHelpers', () => {\n \t\t\texpect(result?.resource).toBe('users');\n \t\t});\n \n+\t\tit('should keep $fromAI placeholders intact when noDataExpression is true', () => {\n+\t\t\tconst nodePropertiesArray: INodeProperties[] = [\n+\t\t\t\t{\n+\t\t\t\t\tname: 'resource',\n+\t\t\t\t\tdisplayName: 'Resource',\n+\t\t\t\t\ttype: 'string',\n+\t\t\t\t\tdefault: '',\n+\t\t\t\t\tnoDataExpression: true,\n+\t\t\t\t},\n+\t\t\t];\n+\n+\t\t\tconst placeholder = `={{ $fromAI('resource', 'The resource', 'string') }}`;\n+\t\t\tconst nodeValues: Record<string, string> = {\n+\t\t\t\tresource: placeholder,\n+\t\t\t};\n+\n+\t\t\tconst node: INode = {\n+\t\t\t\tid: 'test-123',\n+\t\t\t\tname: 'Test',\n+\t\t\t\ttype: 'n8n-nodes-base.test',\n+\t\t\t\ttypeVersion: 1,\n+\t\t\t\tposition: [0, 0],\n+\t\t\t\tparameters: nodeValues,\n+\t\t\t\tcredentials: {},\n+\t\t\t};\n+\t\t\tconst description: INodeTypeDescription = {\n+\t\t\t\tname: 'Test',\n+\t\t\t\tdisplayName: 'Test',\n+\t\t\t\tgroup: [],\n+\t\t\t\tversion: 1,\n+\t\t\t\tdescription: 'Test',\n+\t\t\t\tdefaults: {},\n+\t\t\t\tinputs: [],\n+\t\t\t\toutputs: [],\n+\t\t\t\tproperties: nodePropertiesArray,\n+\t\t\t};\n+\n+\t\t\tconst nodeType: INodeType = {\n+\t\t\t\tdescription,\n+\t\t\t};\n+\n+\t\t\tconst result = getNodeParameters(\n+\t\t\t\tnodeType.description.properties,\n+\t\t\t\tnodeValues,\n+\t\t\t\ttrue,\n+\t\t\t\tfalse,\n+\t\t\t\tnode,\n+\t\t\t\tnodeType.description,\n+\t\t\t);\n+\n+\t\t\texpect(result?.resource).toBe(placeholder);\n+\t\t});\n+\n \t\tit('should not strip expression prefix when noDataExpression is false', () => {\n \t\t\tconst nodePropertiesArray: INodeProperties[] = [\n \t\t\t\t{\n"
+ },
+ "evidence": "## fix(core): Keep $fromAI placeholders intact on fields with expressions disabled\n\nOn noDataExpression fields, getNodeParameters stripped the leading '=' from every expression, turning a $fromAI placeholder into literal text the AI tool could not fill. It now keeps the '=' when the value contains a $fromAI( call. Added a regression test in node-helpers.test.ts.\n\n### What changed\n- 1 source file(s), 1 test file(s), 59 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 0 time(s) and says: Not run: Bash was denied in this session, so acdc-test, acdc-typecheck, acdc-lint, and git diff could not execute. Changes were checked by reading the code only.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 2/2; tests that passed before: 326/328\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- Tests, typecheck, and lint have not been run; the new test is unverified.\n- The fix is a regex on the raw string, so any non-placeholder value containing '$fromAI(' also keeps its '=' prefix.\n- Confirm this matches the reported repro in the Linear issue; the root cause was inferred from the code, not reproduced.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.01\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change keeps the '=' for any value containing $fromAI(, so it fixes the lone-placeholder case. But the issue is about a lone placeholder, and the merged fix uses isFromAIOnlyExpression to strip the prefix when $fromAI is concatenated with other expressions or has an interpolated argument. The engineer's loose regex wrongly preserves those, and a reviewer would want the stricter check.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0103067
+ }
+}

@@ -1,0 +1,85 @@
+{
+ "task": "n8n-31681",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Fixed: `$fromAI` placeholders now survive on fields that have expressions disabled. Tests and the type-check pass, but the linter didn't run.\n\n**Cause:** `getNodeParameters` in `packages/workflow/src/node-helpers.ts` removes the leading `=` from any expression value on a field marked `noDataExpression`. That also hit AI placeholders like `={{ $fromAI('resource') }}`, turning them into the plain string `{{ $fromAI('resource') }}`, which the AI tooling no longer treats as a placeholder.\n\n**Fix:** a small change in that function. It still removes the `=`, except when the value contains a `$fromAI(` call. The check uses a regex, `/\\$fromAI\\s*\\(/i`, which matches the call pattern already used in `from-ai-parse-utils.ts`. All other expressions on these fields are still stripped as before.\n\n**Tests:** I added a parameterised test in `packages/workflow/test/node-helpers.test.ts` covering three cases: a plain `$fromAI(...)`, one with the auto-generated override marker, and one with a space before the bracket. Each one must come back unchanged. The existing tests that check normal stripping still pass.\n\n**Verification:**\n- `acdc-test packages/workflow/test/node-helpers.test.ts`: 187 of 187 passed.\n- `acdc-typecheck`: no errors.\n- `acdc-lint`: exited with code 1 before checking anything, because it couldn't find the `tsgolint` executable (`oxlint-tsgolint`). The changed files haven't been linted.\n\n{\"summary\": \"getNodeParameters stripped the leading '=' from every expression on noDataExpression fields, which turned $fromAI placeholders (e.g. ={{ $fromAI('x') }}) into literal strings. It now skips stripping when the value contains a $fromAI( call, using a regex that matches the one in from-ai-parse-utils. Added parameterised tests covering a plain $fromAI call, the auto-generated override marker, and whitespace before the bracket.\", \"verification\": \"acdc-test packages/workflow/test/node-helpers.test.ts: 187/187 passed. acdc-typecheck: no errors. acdc-lint exited 1 before linting because the tsgolint executable (oxlint-tsgolint) is missing, so the changed files are not linted.\", \"tests_pass\": true, \"risks\": [\"Any noDataExpression value that contains '$fromAI(' anywhere (even mixed with other expression code) now keeps its '=' prefix and is evaluated as an expression rather than turned into a literal; check whether only $fromAI-only expressions (isFromAIOnlyExpression) should be exempt instead\", \"The regex duplicates the pattern in from-ai-parse-utils.ts rather than sharing a constant\", \"Lint was not run because the tsgolint binary is missing\"]}",
+  "cost_usd": 0.3087388,
+  "turns": 17,
+  "tool_calls": 16,
+  "tests_run": 1,
+  "denials": 1,
+  "tokens_in": 246234,
+  "tokens_out": 4259,
+  "model": "claude-opus-5-5",
+  "seconds": 86
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 2,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 326,
+   "total": 328
+  },
+  "failing": [
+   "packages/workflow/test/node-helpers.test.ts :: NodeHelpers getNodeParameters - noDataExpression handling $fromAI placeholder carve-out still strips $fromAI() concatenated with another expression",
+   "packages/workflow/test/node-helpers.test.ts :: NodeHelpers getNodeParameters - noDataExpression handling $fromAI placeholder carve-out still strips $fromAI() with an interpolated value in its argument"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 32,
+  "reference_lines": 4,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.1299305481175214,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": null,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex 20b2f2606..8765c26ab 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -54,6 +54,9 @@ import { validateFieldType } from './type-validation';\n import { deepCopy } from './utils';\n import type { Workflow } from '.';\n \n+/** Matches the start of a `$fromAI(` call, mirroring the pattern in from-ai-parse-utils */\n+const FROM_AI_CALL_REGEX = /\\$fromAI\\s*\\(/i;\n+\n // To facilitate frontend refactoring, make some helper functions work without full workflow object\n type WorkflowForNodeHelpers = Pick<Workflow, 'expression'>;\n \n@@ -820,10 +823,11 @@ export function getNodeParameters(\n \t\t\t\tcontinue;\n \t\t\t}\n \n-\t\t\t// Strip expression prefix if noDataExpression is true\n+\t\t\t// Strip expression prefix if noDataExpression is true, but keep $fromAI\n+\t\t\t// placeholders intact so they can still be resolved by AI tools\n \t\t\tif (nodeProperties.noDataExpression && nodeParameters[nodeProperties.name] !== undefined) {\n \t\t\t\tconst value = nodeParameters[nodeProperties.name];\n-\t\t\t\tif (isExpression(value)) {\n+\t\t\t\tif (isExpression(value) && !FROM_AI_CALL_REGEX.test(value)) {\n \t\t\t\t\tnodeParameters[nodeProperties.name] = value.slice(1);\n \t\t\t\t\tnodeParametersFull[nodeProperties.name] = nodeParameters[nodeProperties.name];\n \t\t\t\t}\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex cc7fa7f93..e02b08725 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -6576,6 +6576,30 @@ describe('NodeHelpers', () => {\n \t\t\texpect(result?.resource).toBe('users');\n \t\t});\n \n+\t\tit.each([\n+\t\t\t\"={{ $fromAI('resource', 'The resource', 'string') }}\",\n+\t\t\t\"={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('resource') }}\",\n+\t\t\t'={{ $fromAI (\"resource\") }}',\n+\t\t])(\n+\t\t\t'should keep $fromAI placeholder intact when noDataExpression is true: %s',\n+\t\t\t(fromAIValue) => {\n+\t\t\t\tconst properties: INodeProperties[] = [\n+\t\t\t\t\t{\n+\t\t\t\t\t\tname: 'resource',\n+\t\t\t\t\t\tdisplayName: 'Resource',\n+\t\t\t\t\t\ttype: 'string',\n+\t\t\t\t\t\tdefault: '',\n+\t\t\t\t\t\tnoDataExpression: true,\n+\t\t\t\t\t},\n+\t\t\t\t];\n+\t\t\t\tconst nodeValues = { resource: fromAIValue };\n+\n+\t\t\t\tconst result = getNodeParameters(properties, nodeValues, true, false, null, null);\n+\n+\t\t\t\texpect(result?.resource).toBe(fromAIValue);\n+\t\t\t},\n+\t\t);\n+\n \t\tit('should not strip expression prefix when noDataExpression is false', () => {\n \t\t\tconst nodePropertiesArray: INodeProperties[] = [\n \t\t\t\t{\n"
+ },
+ "evidence": "## fix(core): Keep $fromAI placeholders intact on fields with expressions disabled\n\n_The agent gave no summary._\n\n### What changed\n- 1 source file(s), 1 test file(s), 32 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: nothing\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 2/2; tests that passed before: 326/328\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.31\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change keeps the '=' whenever $fromAI( appears anywhere in the value, not only when the value is a lone $fromAI() placeholder. Mixed values like $fromAI() concatenated with another expression or with an interpolated argument are no longer stripped, which the merged fix still strips via isFromAIOnlyExpression. It also duplicates the regex instead of reusing the existing from-ai-parse-utils helper.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0111267
+ }
+}

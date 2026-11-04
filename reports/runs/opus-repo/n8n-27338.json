@@ -1,0 +1,84 @@
+{
+ "task": "n8n-27338",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed `$().item` failing in partial executions, but I had to guess the cause: the issue had no reproduction and I couldn't see git history or the code that sets up partial executions. The new tests pass.\n\n**Cause.** `getPairedItem` in `packages/workflow/src/workflow-data-proxy.ts` resolves `$().item` by walking back through each node's saved `source` information. In a partial execution, a node in the middle of the chain can have empty `source` data (`[]` or `[null]`). My guess is that this happens to a node that was the starting point of an earlier partial run. When that happens the walk stops early. With `source: []`, the result list is empty and `results[0].error` throws a raw `TypeError`. With `source: [null]`, you get a \"Paired item resolution failed\" error instead.\n\n**Fix.**\n- **New helper, `getSourceFromConnections`.** When a node's `source` entry for an input is missing, it works out the parent from the workflow's connections instead. It only does this when exactly one node feeds that input and that node has run data or pinned data. It uses the parent's latest run.\n- **Crash guard.** The \"all paths failed\" check now needs at least one result, so an empty list gives the normal \"no connection\" error instead of the `TypeError`.\n\n**Tests.** I added tests in `test/workflow-data-proxy.test.ts` for a chain `Trigger → A → B → C` where A has `source: []` or `[null]`. They check that `$('Trigger').item` and `$('A').item` resolve from C, plus one with normal source data. With the fallback switched off, both new missing-source tests fail.\n\n**Verification.**\n- `acdc-test test/workflow-data-proxy.test.ts`: all 147 pass.\n- Full `acdc-test`: 2059 pass, 1 fails. The failure is `telemetry-helpers.test.ts` (\"should not fail on error to resolve a node parameter for sticky node type\", a `TypeError` reading `forEach`). That test doesn't involve the code I changed, but I couldn't run it on a clean checkout to confirm it was already failing.\n- `acdc-typecheck`: one error, in `src/expression.ts` (`'bridge'` is not a known `EvaluatorConfig` property). I didn't touch that file.\n- `acdc-lint`: didn't run, because the `oxlint-tsgolint` tool is missing.\n\n{\"summary\": \"In packages/workflow/src/workflow-data-proxy.ts, getPairedItem stopped resolving $().item when a node in the chain had empty or null `source` task data, which is assumed (not confirmed) to happen in partial executions. With `source: []` it crashed with a raw TypeError on `results[0].error`; with `[null]` it threw 'Paired item resolution failed'. Added getSourceFromConnections, which works out the missing source from the workflow's connections when exactly one parent feeds that input and the parent has run or pinned data (using its latest run). Also guarded the all-failed check so an empty result list gives the normal 'no connection' error. Added tests for empty and null source on an intermediate node, plus a case with normal source data.\", \"verification\": \"acdc-test test/workflow-data-proxy.test.ts: 147/147 pass; with the fallback switched off, the 2 new missing-source tests fail. Full acdc-test: 2059 pass, 1 fails (telemetry-helpers.test.ts sticky-node test, TypeError reading forEach); that test doesn't involve the changed code, but it wasn't checked on a clean tree. acdc-typecheck: one error in src/expression.ts ('bridge' not in EvaluatorConfig), a file not touched. acdc-lint did not run because the oxlint-tsgolint executable is missing.\", \"tests_pass\": true, \"risks\": [\"Root cause is inferred: no reproduction was available, and git history plus the core partial-execution code could not be checked, so confirm that partial executions really produce empty or null `source` entries\", \"The fallback uses the parent's latest run (runData.length - 1); this may pick the wrong run in loops or multi-run partial executions\", \"The fallback only applies when exactly one connection feeds the input; inputs with several connections still error\", \"Lint was not run (tool missing); the unrelated telemetry-helpers test failure and the expression.ts typecheck error should be confirmed as already present on master\"]}",
+  "cost_usd": 0.627864,
+  "turns": 27,
+  "tool_calls": 26,
+  "tests_run": 5,
+  "denials": 1,
+  "tokens_in": 502778,
+  "tokens_out": 14097,
+  "model": "claude-opus-5-5",
+  "seconds": 230
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 311,
+   "total": 311
+  },
+  "failing": [
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy Partial execution: $() referencing executed node from unexecuted active node $(\"Edit\").item.json.test should resolve when the referenced node was executed"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-data-proxy.ts",
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-data-proxy.test.ts"
+  ],
+  "lines_changed": 124,
+  "reference_lines": 18,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-data-proxy.ts b/packages/workflow/src/workflow-data-proxy.ts\nindex 1e70d6d93..ccde582a5 100644\n--- a/packages/workflow/src/workflow-data-proxy.ts\n+++ b/packages/workflow/src/workflow-data-proxy.ts\n@@ -957,6 +957,31 @@ export class WorkflowDataProxy {\n \t\t\treturn pairedItems.map((p) => (typeof p === 'number' ? { item: p } : p));\n \t\t};\n \n+\t\t/**\n+\t\t * In partial executions the task data of nodes can lack source information\n+\t\t * (e.g. nodes that were start nodes of a previous partial execution). In that\n+\t\t * case derive the source from the workflow connections, as long as it is\n+\t\t * unambiguous and the parent node has data.\n+\t\t */\n+\t\tconst getSourceFromConnections = (nodeName: string, inputIndex: number): ISourceData | null => {\n+\t\t\tconst parentConnections =\n+\t\t\t\tthat.workflow.connectionsByDestinationNode[nodeName]?.[NodeConnectionTypes.Main]?.[\n+\t\t\t\t\tinputIndex\n+\t\t\t\t];\n+\t\t\tif (parentConnections?.length !== 1) return null;\n+\n+\t\t\tconst [{ node: previousNode, index: previousNodeOutput }] = parentConnections;\n+\t\t\tconst parentRuns = that.runExecutionData?.resultData?.runData?.[previousNode];\n+\n+\t\t\tif (parentRuns?.length) {\n+\t\t\t\treturn { previousNode, previousNodeOutput, previousNodeRun: parentRuns.length - 1 };\n+\t\t\t}\n+\t\t\tif (getPinDataIfManualExecution(that.workflow, previousNode, that.mode)) {\n+\t\t\t\treturn { previousNode, previousNodeOutput, previousNodeRun: 0 };\n+\t\t\t}\n+\t\t\treturn null;\n+\t\t};\n+\n \t\tconst getPairedItem = (\n \t\t\tdestinationNodeName: string,\n \t\t\tincomingSourceData: ISourceData | null,\n@@ -996,9 +1021,12 @@ export class WorkflowDataProxy {\n \t\t\tconst results = nextPairedItems.flatMap((nextPairedItem) => {\n \t\t\t\tconst inputIndex = nextPairedItem.input ?? 0;\n \n-\t\t\t\tif (inputIndex >= sourceArray.length) return [];\n+\t\t\t\tconst nextSource =\n+\t\t\t\t\tnextPairedItem.sourceOverwrite ??\n+\t\t\t\t\tsourceArray[inputIndex] ??\n+\t\t\t\t\tgetSourceFromConnections(sourceData.previousNode, inputIndex);\n \n-\t\t\t\tconst nextSource = nextPairedItem.sourceOverwrite ?? sourceArray[inputIndex];\n+\t\t\t\tif (!nextSource) return [];\n \n \t\t\t\ttry {\n \t\t\t\t\treturn createResultOk(\n@@ -1015,7 +1043,7 @@ export class WorkflowDataProxy {\n \t\t\t\t}\n \t\t\t});\n \n-\t\t\tif (results.every((result) => !result.ok)) {\n+\t\t\tif (results.length > 0 && results.every((result) => !result.ok)) {\n \t\t\t\tthrow results[0].error;\n \t\t\t}\n \ndiff --git a/packages/workflow/test/workflow-data-proxy.test.ts b/packages/workflow/test/workflow-data-proxy.test.ts\nindex 4cac88b2c..b123d6609 100644\n--- a/packages/workflow/test/workflow-data-proxy.test.ts\n+++ b/packages/workflow/test/workflow-data-proxy.test.ts\n@@ -8,7 +8,9 @@ import {\n \ttype NodeConnectionType,\n \ttype IExecuteData,\n \ttype INode,\n+\ttype INodeExecutionData,\n \ttype IPinData,\n+\ttype ITaskData,\n \ttype IRun,\n \ttype IWorkflowBase,\n \ttype IWorkflowDataProxyAdditionalKeys,\n@@ -839,6 +841,94 @@ describe('WorkflowDataProxy', () => {\n \t\t});\n \t});\n \n+\tdescribe('$().item in partial executions with missing source data', () => {\n+\t\tconst node = (name: string, type = 'n8n-nodes-base.set'): INode => ({\n+\t\t\tid: name,\n+\t\t\tname,\n+\t\t\ttype,\n+\t\t\ttypeVersion: 1,\n+\t\t\tposition: [0, 0],\n+\t\t\tparameters: {},\n+\t\t});\n+\t\tconst workflowBase = {\n+\t\t\tnodes: [node('Trigger', 'n8n-nodes-base.manualTrigger'), node('A'), node('B'), node('C')],\n+\t\t\tconnections: {\n+\t\t\t\tTrigger: { main: [[{ node: 'A', type: 'main', index: 0 }]] },\n+\t\t\t\tA: { main: [[{ node: 'B', type: 'main', index: 0 }]] },\n+\t\t\t\tB: { main: [[{ node: 'C', type: 'main', index: 0 }]] },\n+\t\t\t},\n+\t\t} as unknown as IWorkflowBase;\n+\n+\t\tconst task = (\n+\t\t\tmain: INodeExecutionData[],\n+\t\t\tsource: ITaskData['source'],\n+\t\t): ITaskData => ({\n+\t\t\tstartTime: 0,\n+\t\t\texecutionTime: 0,\n+\t\t\texecutionIndex: 0,\n+\t\t\tsource,\n+\t\t\tdata: { main: [main] },\n+\t\t});\n+\n+\t\tconst buildRun = (aSource: ITaskData['source']) =>\n+\t\t\t({\n+\t\t\t\tdata: {\n+\t\t\t\t\tresultData: {\n+\t\t\t\t\t\trunData: {\n+\t\t\t\t\t\t\tTrigger: [task([{ json: { v: 't0' } }, { json: { v: 't1' } }], [])],\n+\t\t\t\t\t\t\t// \"A\" was the start node of a previous partial execution, so it lacks source data\n+\t\t\t\t\t\t\tA: [\n+\t\t\t\t\t\t\t\ttask(\n+\t\t\t\t\t\t\t\t\t[\n+\t\t\t\t\t\t\t\t\t\t{ json: { v: 'a0' }, pairedItem: { item: 0 } },\n+\t\t\t\t\t\t\t\t\t\t{ json: { v: 'a1' }, pairedItem: { item: 1 } },\n+\t\t\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\t\t\taSource,\n+\t\t\t\t\t\t\t\t),\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\tB: [\n+\t\t\t\t\t\t\t\ttask(\n+\t\t\t\t\t\t\t\t\t[\n+\t\t\t\t\t\t\t\t\t\t{ json: { v: 'b0' }, pairedItem: { item: 0 } },\n+\t\t\t\t\t\t\t\t\t\t{ json: { v: 'b1' }, pairedItem: { item: 1 } },\n+\t\t\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\t\t\t[{ previousNode: 'A' }],\n+\t\t\t\t\t\t\t\t),\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\tC: [\n+\t\t\t\t\t\t\t\ttask(\n+\t\t\t\t\t\t\t\t\t[\n+\t\t\t\t\t\t\t\t\t\t{ json: { v: 'c0' }, pairedItem: { item: 0 } },\n+\t\t\t\t\t\t\t\t\t\t{ json: { v: 'c1' }, pairedItem: { item: 1 } },\n+\t\t\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t\t\t\t[{ previousNode: 'B' }],\n+\t\t\t\t\t\t\t\t),\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t},\n+\t\t\t\t},\n+\t\t\t}) as unknown as IRun;\n+\n+\t\ttest.each([\n+\t\t\t{ name: 'empty source', aSource: [] },\n+\t\t\t{ name: 'null source', aSource: [null] },\n+\t\t])('resolves item through a node with $name', ({ aSource }) => {\n+\t\t\tconst proxy = getProxyFromFixture(workflowBase, buildRun(aSource), 'C', 'manual');\n+\t\t\texpect(proxy.$('Trigger').item.json.v).toEqual('t0');\n+\t\t\texpect(proxy.$('A').item.json.v).toEqual('a0');\n+\t\t});\n+\n+\t\ttest('still resolves when source data is present', () => {\n+\t\t\tconst proxy = getProxyFromFixture(\n+\t\t\t\tworkflowBase,\n+\t\t\t\tbuildRun([{ previousNode: 'Trigger' }]),\n+\t\t\t\t'C',\n+\t\t\t\t'manual',\n+\t\t\t);\n+\t\t\texpect(proxy.$('Trigger').item.json.v).toEqual('t0');\n+\t\t});\n+\t});\n+\n \tdescribe('$fromAI', () => {\n \t\tconst fixture = loadFixture('from_ai_multiple_items');\n \t\tconst getFromAIProxy = (runIndex = 0) =>\n"
+ },
+ "evidence": "## fix(core): Resolve $().item expressions in partial executions\n\nIn packages/workflow/src/workflow-data-proxy.ts, getPairedItem stopped resolving $().item when a node in the chain had empty or null `source` task data, which is assumed (not confirmed) to happen in partial executions. With `source: []` it crashed with a raw TypeError on `results[0].error`; with `[null]` it threw 'Paired item resolution failed'. Added getSourceFromConnections, which works out the missing source from the workflow's connections when exactly one parent feeds that input and the parent has run or pinned data (using its latest run). Also guarded the all-failed check so an empty result list gives the normal 'no connection' error. Added tests for empty and null source on an intermediate node, plus a case with normal source data.\n\n### What changed\n- 1 source file(s), 1 test file(s), 124 changed lines\n- `packages/workflow/src/workflow-data-proxy.ts`\n\n### What ran\n- The agent ran the tests 5 time(s) and says: acdc-test test/workflow-data-proxy.test.ts: 147/147 pass; with the fallback switched off, the 2 new missing-source tests fail. Full acdc-test: 2059 pass, 1 fails (telemetry-helpers.test.ts sticky-node test, TypeError reading forEach); that test doesn't involve the changed code, but it wasn't checked on a clean tree. acdc-typecheck: one error in src/expression.ts ('bridge' not in EvaluatorConfig), a file not touched. acdc-lint did not run because the oxlint-tsgolint executable is missing.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 0/1; tests that passed before: 311/311\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- Root cause is inferred: no reproduction was available, and git history plus the core partial-execution code could not be checked, so confirm that partial executions really produce empty or null `source` entries\n- The fallback uses the parent's latest run (runData.length - 1); this may pick the wrong run in loops or multi-run partial executions\n- The fallback only applies when exactly one connection feeds the input; inputs with several connections still error\n- Lint was not run (tool missing); the unrelated telemetry-helpers test failure and the expression.ts typecheck error should be confirmed as already present on master\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.63\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "wrong_cause",
+  "reviewer_would_accept": false,
+  "reason": "The engineer changed paired-item tracing to derive missing source data from connections, but the real problem is that the active node has not run yet, so tracing cannot start. The fix falls back to reading the referenced node's run data directly, and the engineer's change never adds that fallback, so $('Edit').item still fails in the unexecuted-active-node case and the hidden test fails.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.012248700000000001
+ }
+}

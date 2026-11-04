@@ -1,0 +1,83 @@
+{
+ "task": "n8n-41080",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Node reference calls (`$('X').first()`, `.last()`, `.all()`, `$input.first()` and so on) now count against the native evaluation work budget. The parity test file passes (916 tests), and typecheck and lint are clean. I did not run the new test against the unfixed code, so I haven't seen it fail without the change.\n\n**Cause:** `evalNodeRefCall` in `evaluator.ts` returned the run data after only a length check. Neither a single call nor a callback body that calls it once per element was charged for it. Other allocating paths such as extensions, `+` and array literals were already charged.\n\n**Fix:** `evalNodeRefCall` now takes `env`. It computes the result's `contentWeight`, falls back to the engine if that exceeds `MAX_RESULT_LENGTH`, and otherwise calls `env.charge(weight)`. That is the same pattern `evalExtension` uses. The caller in `evalCall` passes `env` through.\n\n**Test:** the new case \"node reference calls in a callback body are charged per visit\" in `test/native-evaluation-parity.test.ts` uses a fake `$` whose `first()` returns a large payload. Two visits are handled natively. Enough visits to pass `MAX_WORK` fall back to the engine.\n\nMidway through, one Bash call was denied. I made the same test edit with the Edit tool and ran the rest normally.\n\n{\"summary\": \"Charge the content weight of first()/last()/all() results on node references against the native evaluation work budget (falling back to the engine if over MAX_RESULT_LENGTH), so per-element node reference calls in callback bodies can no longer bypass the budget. Added a parity test for it.\", \"verification\": \"acdc-test test/native-evaluation-parity.test.ts: 916/916 passed. acdc-typecheck: 0 errors. acdc-lint on the changed files: 0 warnings and 0 errors. I did not run the new test against the unfixed code, so I have not seen it fail without the change.\", \"tests_pass\": true, \"risks\": [\"contentWeight walks the whole result on every node reference call, which adds a bit of cost to every handled node reference expression.\", \"Large node outputs now fall back to the engine sooner (a single result above MAX_RESULT_LENGTH, or repeated calls in a loop). Correctness is unchanged because the engine handles them, but some expressions will no longer be handled natively.\", \"The new test uses a fake `$` function rather than a real WorkflowDataProxy, so it checks the budget accounting but not the real proxy's result shape.\"]}",
+  "cost_usd": 0.15906220000000004,
+  "turns": 22,
+  "tool_calls": 21,
+  "tests_run": 3,
+  "denials": 1,
+  "tokens_in": 292029,
+  "tokens_out": 5541,
+  "model": "claude-sonnet-5-5",
+  "seconds": 130
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 457,
+   "total": 457
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards node reference calls in a callback body are charged per item"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 28,
+  "reference_lines": 14,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.16109806008739397,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 1a3d10954..c3bfbc2ec 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -363,7 +363,7 @@ function evalReceiver(\n \n function evalCall(node: Extract<SimpleNode, { kind: 'call' }>, env: Env): unknown {\n \tif (node.receiver.kind === 'nodeRef') {\n-\t\treturn evalNodeRefCall(evalReceiver(node, env), node.method);\n+\t\treturn evalNodeRefCall(evalReceiver(node, env), node.method, env);\n \t}\n \n \tif (node.receiver.kind === 'timeRoot') {\n@@ -472,11 +472,18 @@ function evalIterate(node: Extract<SimpleNode, { kind: 'iterate' }>, env: Env):\n  * host function that reads run data for the node the reference names, which\n  * is what the engines call too (the vm bridge routes it through typed RPC).\n  */\n-function evalNodeRefCall(proxy: unknown, method: string): unknown {\n+function evalNodeRefCall(proxy: unknown, method: string, env: Env): unknown {\n \tconst fn: unknown = Reflect.get(proxy as object, method);\n \tif (typeof fn !== 'function') throw new EngineFallbackError();\n \n-\treturn bounded(fn.call(proxy));\n+\tconst result: unknown = bounded(fn.call(proxy));\n+\n+\t// The run data is materialised on every call, once per visit in a body.\n+\tconst weight = contentWeight(result, MAX_RESULT_LENGTH);\n+\tif (weight > MAX_RESULT_LENGTH) throw new EngineFallbackError();\n+\tenv.charge(weight);\n+\n+\treturn result;\n }\n \n /**\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex e75209856..1878dd70d 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -642,6 +642,21 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\t).toEqual({ handled: false });\n \t\t});\n \n+\t\t// first()/last()/all() on a node reference materialise run data on every\n+\t\t// call, so a body calling one per element is charged for the result.\n+\t\ttest('node reference calls in a callback body are charged per visit', () => {\n+\t\t\tconst payload = 'x'.repeat(MAX_RESULT_LENGTH / 2);\n+\t\t\tconst $ = () => ({ first: () => ({ json: { payload } }) });\n+\t\t\tconst visits = Math.ceil(MAX_WORK / payload.length);\n+\t\t\tconst run = (count: number) =>\n+\t\t\t\tnativeOn(\"{{ $json.list.every(n => $('Source').first().json.payload.length > n) }}\", {\n+\t\t\t\t\t$json: { list: new Array<number>(count).fill(0) },\n+\t\t\t\t\t$,\n+\t\t\t\t});\n+\t\t\texpect(run(2)).toEqual({ handled: true, value: true });\n+\t\t\texpect(run(visits + 1)).toEqual({ handled: false });\n+\t\t});\n+\n \t\t// A `$parameter` read resolves a nested expression in its own evaluation,\n \t\t// with its own budgets. Read once per evaluation (as the vm bridge does),\n \t\t// a body cannot resolve it once per element.\n"
+ },
+ "evidence": "## fix(core): Charge node reference calls against the native evaluation work budget (no-changelog)\n\nCharge the content weight of first()/last()/all() results on node references against the native evaluation work budget (falling back to the engine if over MAX_RESULT_LENGTH), so per-element node reference calls in callback bodies can no longer bypass the budget. Added a parity test for it.\n\n### What changed\n- 1 source file(s), 1 test file(s), 28 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 3 time(s) and says: acdc-test test/native-evaluation-parity.test.ts: 916/916 passed. acdc-typecheck: 0 errors. acdc-lint on the changed files: 0 warnings and 0 errors. I did not run the new test against the unfixed code, so I have not seen it fail without the change.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/1; tests that passed before: 457/457\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (16% chance of a revert or follow-up fix, from n8n's history)\n- contentWeight walks the whole result on every node reference call, which adds a bit of cost to every handled node reference expression.\n- Large node outputs now fall back to the engine sooner (a single result above MAX_RESULT_LENGTH, or repeated calls in a loop). Correctness is unchanged because the engine handles them, but some expressions will no longer be handled natively.\n- The new test uses a fake `$` function rather than a real WorkflowDataProxy, so it checks the budget accounting but not the real proxy's result shape.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.16\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change charges node reference calls with a content-weight measure instead of per returned element, and it adds no charge for `.item`/`.json` member reads through the proxy. Repeated calls in a callback body therefore don't exhaust the budget as the issue intends, and the per-item callback test fails. I haven't run the tests or read `contentWeight`, so this rests on the diff and the failing test name.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0182987
+ }
+}

@@ -1,0 +1,82 @@
+{
+ "task": "n8n-29689",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Tests pass: 178 in `node-helpers.test.ts`, including the new one. The typecheck printed nothing. `acdc-lint` couldn't run, because it failed to find the `tsgolint` executable.\n\nThe multiple-values branch of `getNodeParameters` threw \"Could not find property option\" for any key in a `fixedCollection` value that isn't in the node's options. The single-value branch already skipped those keys. I moved the option lookup in `packages/workflow/src/node-helpers.ts` ahead of the inner loop and made it `continue` when the key is unknown. That also means no empty array is emitted for the skipped key. The new test in `packages/workflow/test/node-helpers.test.ts` passes a value with an unknown key and expects only the known one back.\n\n{\"summary\": \"In getNodeParameters, the multipleValues branch of fixedCollection handling now skips keys that have no matching option instead of throwing 'Could not find property option', matching the single-value branch. The option lookup now happens once per key, before the inner loop, so no empty array is emitted for the skipped key. Added a unit test for it.\", \"verification\": \"acdc-test packages/workflow/test/node-helpers.test.ts: 178 passed, including the new test. acdc-typecheck printed no errors. acdc-lint could not run: it failed with 'Failed to find tsgolint executable', so lint is unverified.\", \"tests_pass\": true, \"risks\": [\"Unknown keys are now dropped silently in the multipleValues path, so typos or stale keys in saved parameters will no longer surface as errors.\", \"Lint was not run because tsgolint is missing in this environment.\", \"The test in telemetry-helpers.test.ts that throws 'Could not find property option' is a standalone mock and is not affected by this change.\"]}",
+  "cost_usd": 0.1325745,
+  "turns": 18,
+  "tool_calls": 17,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 210771,
+  "tokens_out": 5241,
+  "model": "claude-sonnet-5-5",
+  "seconds": 79
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 318,
+   "total": 318
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 49,
+  "reference_lines": 19,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12987441102537045,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex d7ae0b95a..f7430f6a9 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -929,20 +929,19 @@ export function getNodeParameters(\n \t\t\t\t\tif (typeof propertyValues !== 'object' || Array.isArray(propertyValues)) {\n \t\t\t\t\t\tcontinue;\n \t\t\t\t\t}\n+\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n+\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n+\t\t\t\t\t) as INodePropertyCollection | undefined;\n+\n+\t\t\t\t\t// Skip unknown keys instead of throwing\n+\t\t\t\t\tif (nodePropertyOptions === undefined) {\n+\t\t\t\t\t\tcontinue;\n+\t\t\t\t\t}\n+\n \t\t\t\t\t// Iterate over all items as it contains multiple ones\n \t\t\t\t\tfor (const nodeValue of (propertyValues as INodeParameters)[\n \t\t\t\t\t\titemName\n \t\t\t\t\t] as INodeParameters[]) {\n-\t\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n-\t\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n-\t\t\t\t\t\t) as INodePropertyCollection;\n-\n-\t\t\t\t\t\tif (nodePropertyOptions === undefined) {\n-\t\t\t\t\t\t\tthrow new ApplicationError('Could not find property option', {\n-\t\t\t\t\t\t\t\textra: { propertyOption: itemName, property: nodeProperties.name },\n-\t\t\t\t\t\t\t});\n-\t\t\t\t\t\t}\n-\n \t\t\t\t\t\ttempNodePropertiesArray = nodePropertyOptions.values!;\n \t\t\t\t\t\ttempValue = getNodeParameters(\n \t\t\t\t\t\t\ttempNodePropertiesArray,\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex 2da320a95..2681c6e69 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -3664,6 +3664,36 @@ describe('NodeHelpers', () => {\n \t\t\t\texpect(result).toEqual(testData.output.noneDisplayedTrue.defaultsTrue);\n \t\t\t});\n \t\t}\n+\n+\t\tit('skips unknown fixedCollection keys with multipleValues instead of throwing', () => {\n+\t\t\tconst properties: INodeProperties[] = [\n+\t\t\t\t{\n+\t\t\t\t\tdisplayName: 'Items',\n+\t\t\t\t\tname: 'items',\n+\t\t\t\t\ttype: 'fixedCollection',\n+\t\t\t\t\ttypeOptions: { multipleValues: true },\n+\t\t\t\t\tdefault: {},\n+\t\t\t\t\toptions: [\n+\t\t\t\t\t\t{\n+\t\t\t\t\t\t\tname: 'known',\n+\t\t\t\t\t\t\tdisplayName: 'Known',\n+\t\t\t\t\t\t\tvalues: [{ displayName: 'Name', name: 'name', type: 'string', default: '' }],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t],\n+\t\t\t\t},\n+\t\t\t];\n+\n+\t\t\tconst result = getNodeParameters(\n+\t\t\t\tproperties,\n+\t\t\t\t{ items: { known: [{ name: 'a' }], unknown: [{ foo: 'bar' }] } },\n+\t\t\t\tfalse,\n+\t\t\t\tfalse,\n+\t\t\t\tnull,\n+\t\t\t\tnull,\n+\t\t\t);\n+\n+\t\t\texpect(result).toEqual({ items: { known: [{ name: 'a' }] } });\n+\t\t});\n \t});\n \n \tdescribe('isSubNodeType', () => {\n"
+ },
+ "evidence": "## fix(core): Skip unknown fixedCollection keys instead of throwing\n\nIn getNodeParameters, the multipleValues branch of fixedCollection handling now skips keys that have no matching option instead of throwing 'Could not find property option', matching the single-value branch. The option lookup now happens once per key, before the inner loop, so no empty array is emitted for the skipped key. Added a unit test for it.\n\n### What changed\n- 1 source file(s), 1 test file(s), 49 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test packages/workflow/test/node-helpers.test.ts: 178 passed, including the new test. acdc-typecheck printed no errors. acdc-lint could not run: it failed with 'Failed to find tsgolint executable', so lint is unverified.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 318/318\n\n### Risks that remain\n- Change risk: medium (13% chance of a revert or follow-up fix, from n8n's history)\n- Unknown keys are now dropped silently in the multipleValues path, so typos or stale keys in saved parameters will no longer surface as errors.\n- Lint was not run because tsgolint is missing in this environment.\n- The test in telemetry-helpers.test.ts that throws 'Could not find property option' is a standalone mock and is not affected by this change.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.13\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change is functionally identical to the merged fix: it moves the option lookup before the item loop and uses `continue` to skip unknown keys instead of throwing. The only difference is a more accurate `| undefined` type cast and a comment, and no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0016516
+ }
+}

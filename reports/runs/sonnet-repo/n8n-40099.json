@@ -1,0 +1,84 @@
+{
+ "task": "n8n-40099",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I changed the native array bounds in `packages/workflow`, and the native-evaluation tests pass. Typecheck and lint didn't give a clean result for this change, and I didn't find out why.\n\n**Cause:** `assertPreflightSize` in `src/expressions/native-evaluation/evaluator.ts` only checked the length of the receiver array. A small array with huge elements, or with nested arrays, passed the check. `toSorted` then did content-sized work on the main thread: its default comparator stringifies elements on every comparison. `join` stringified every element before it checked the total.\n\n**Change:**\n- I added a `contentSize()` helper. It estimates an element's stringified length without stringifying it, walks nested arrays, and stops once it passes `MAX_RESULT_LENGTH`.\n- `join` now uses it and stops early, so it no longer builds each element's string first.\n- `toSorted` now gets the same content-based check, so an oversized array falls back to the regular engine before any sort work.\n\n**Tests:** I added `toSorted and join are bounded by element content, not count` to `test/native-evaluation-parity.test.ts`. Arrays of two 600k-character strings, and nested versions of them, fall back to the engine. A small array is still handled natively.\n\n**Verification:**\n- `acdc-test` on the parity, corpus-coverage and fuzz tests: 6 files, 380 tests passed.\n- `acdc-typecheck` reports one error, `src/nodes-api-version.ts(49,6): TS2365`. That file isn't in my diff and I didn't investigate it.\n- `acdc-lint` failed to start because it couldn't find `oxlint.config.mts`, so the touched files weren't linted.\n\n{\"summary\": \"Native array methods were bounded by element count only. Added a content-size estimate (contentSize) so join and toSorted fall back to the engine when element content, including nested arrays, exceeds MAX_RESULT_LENGTH, before any work is done. Added a parity test.\", \"verification\": \"acdc-test on the native-evaluation parity, corpus-coverage and fuzz tests: 6 files, 380 tests passed. acdc-typecheck reports one error in src/nodes-api-version.ts (TS2365), a file I didn't touch and didn't investigate. acdc-lint could not run because oxlint.config.mts was not found, so the touched files were not linted.\", \"tests_pass\": true, \"risks\": [\"contentSize counts non-string primitives by String() length and nested arrays by element count plus content, an estimate rather than exact output size\", \"toSorted now falls back to the engine for arrays whose content exceeds 1M characters; previously only element count was checked\", \"I picked toSorted and join as the content-sensitive methods; a reviewer should confirm no other array method needs the same check\", \"typecheck error in src/nodes-api-version.ts was not investigated, and lint was not run on the touched files\"]}",
+  "cost_usd": 0.16370259999999998,
+  "turns": 13,
+  "tool_calls": 12,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 157072,
+  "tokens_out": 5004,
+  "model": "claude-sonnet-5-5",
+  "seconds": 75
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 0,
+   "total": 2
+  },
+  "pass_to_pass": {
+   "passed": 188,
+   "total": 188
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards join and toSorted hand nested elements to the engine",
+   "packages/workflow/test/native-evaluation-parity.test.ts :: Expression - fast native evaluation parity structural guards concat is bounded by the content it references"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 38,
+  "reference_lines": 74,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.12002337400491134,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 757b17563..2ef3a3b46 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -196,8 +196,14 @@ function assertPreflightSize(receiver: unknown, method: string, args: unknown[])\n \t\tupperBound = separator.length * Math.max(receiver.length - 1, 0);\n \n \t\tfor (const element of receiver) {\n-\t\t\tupperBound += toStr(element ?? '').length;\n+\t\t\tupperBound += contentSize(element);\n+\t\t\tif (upperBound > MAX_RESULT_LENGTH) break;\n \t\t}\n+\t} else if (method === 'toSorted' && isArray(receiver)) {\n+\t\t// The default comparator stringifies elements on every comparison, so the\n+\t\t// work scales with element content (long strings, nested arrays), not\n+\t\t// with the element count.\n+\t\tupperBound = contentSize(receiver);\n \t}\n \n \tif (upperBound > MAX_RESULT_LENGTH) {\n@@ -205,6 +211,24 @@ function assertPreflightSize(receiver: unknown, method: string, args: unknown[])\n \t}\n }\n \n+/**\n+ * Upper bound of an element's stringified length, measured without\n+ * stringifying it (nested arrays are walked) and stopping early once past\n+ * the cap.\n+ */\n+function contentSize(value: unknown): number {\n+\tif (value === null || value === undefined) return 0;\n+\tif (typeof value === 'string') return value.length;\n+\tif (!isArray(value)) return toStr(value).length;\n+\n+\tlet size = value.length;\n+\tfor (const element of value) {\n+\t\tsize += contentSize(element);\n+\t\tif (size > MAX_RESULT_LENGTH) break;\n+\t}\n+\treturn size;\n+}\n+\n /**\n  * Element count of `array.flat(depth)`, stopping early once past the cap\n  * (a nested structure can flatten to far more elements than the outer\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex 2aebe12f1..165a1e0eb 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -312,6 +312,18 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\t);\n \t\t});\n \n+\t\ttest('toSorted and join are bounded by element content, not count', () => {\n+\t\t\tconst big = 'x'.repeat(600_000);\n+\t\t\tconst $json = { few: [big, big], small: ['b', 'a'], nested: [[big], [big]] };\n+\t\t\texpect(nativeOn('{{ $json.few.toSorted() }}', { $json })).toEqual({ handled: false });\n+\t\t\texpect(nativeOn('{{ $json.nested.toSorted() }}', { $json })).toEqual({ handled: false });\n+\t\t\texpect(nativeOn('{{ $json.nested.join() }}', { $json })).toEqual({ handled: false });\n+\t\t\texpect(nativeOn('{{ $json.small.toSorted() }}', { $json })).toEqual({\n+\t\t\t\thandled: true,\n+\t\t\t\tvalue: ['a', 'b'],\n+\t\t\t});\n+\t\t});\n+\n \t\t// A single replacement with context tokens can expand to many times the\n \t\t// receiver, so replace bails like replaceAll before anything is built.\n \t\t// Receiver and expansion both stay under the size cap here, so only the\n"
+ },
+ "evidence": "## fix(core): Bound native array methods by element content, not count (no-changelog)\n\nNative array methods were bounded by element count only. Added a content-size estimate (contentSize) so join and toSorted fall back to the engine when element content, including nested arrays, exceeds MAX_RESULT_LENGTH, before any work is done. Added a parity test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 38 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on the native-evaluation parity, corpus-coverage and fuzz tests: 6 files, 380 tests passed. acdc-typecheck reports one error in src/nodes-api-version.ts (TS2365), a file I didn't touch and didn't investigate. acdc-lint could not run because oxlint.config.mts was not found, so the touched files were not linted.\n- Type check: passes; lint: passes\n- Tests for the issue: 0/2; tests that passed before: 188/188\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (12% chance of a revert or follow-up fix, from n8n's history)\n- contentSize counts non-string primitives by String() length and nested arrays by element count plus content, an estimate rather than exact output size\n- toSorted now falls back to the engine for arrays whose content exceeds 1M characters; previously only element count was checked\n- I picked toSorted and join as the content-sensitive methods; a reviewer should confirm no other array method needs the same check\n- typecheck error in src/nodes-api-version.ts was not investigated, and lint was not run on the touched files\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.16\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change bounds join and toSorted by content size, but it never bounds concat, which can hold far more content than the payload because many arguments can reference one large string. It also sums nested content rather than handing nested elements to the engine, so the join/toSorted nested-element test fails.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0153367
+ }
+}

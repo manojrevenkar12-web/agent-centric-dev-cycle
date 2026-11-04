@@ -1,0 +1,77 @@
+{
+ "task": "n8n-32970",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed it: a credential template like `=Bearer {{$self.token}}` now gets the resolved value of `token` even when that credential field is in expression mode itself. The new tests pass and the type-check is clean, but the linter couldn't run here.\n\n**Cause:** `getComplexParameterValue` in `packages/workflow/src/workflow-expression.ts` hands credential data to `$self` without resolving it first. So if `token` was `={{ ... }}`, `$self.token` returned that raw string, and the template came out as `Bearer ={{ ... }}`. The second resolve pass that function already does couldn't catch it, because the result no longer starts with `=`, so it isn't treated as an expression.\n\n**Fix:** before resolving the template, the function now resolves every top-level credential value that starts with `=`. Values that aren't expressions are left as they are. These values are resolved without `$self`, so they can't refer to each other and can't loop.\n\n**Tests:** I added two cases to `packages/workflow/test/workflow-expression.test.ts`: one with a plain `$self` value and one with an expression-mode value (`={{ 'abc' + '123' }}` → `Bearer abc123`). I didn't run the new test against the old code. Going by the cause above, the expression-mode case should fail without the fix.\n\n**Verification:**\n- `acdc-test test/workflow-expression.test.ts`: 3 of 3 passed.\n- `acdc-typecheck`: no errors.\n- `acdc-lint`: didn't run. It stopped with \"Failed to find tsgolint executable\" (the `oxlint-tsgolint` package is missing here), so lint still needs to run in CI.\n\n**Behaviour change:** any top-level credential value starting with `=` is now evaluated, so a literal secret that happens to start with `=` (say, a password) would be treated as an expression. This is the usual n8n convention, but it's new for this path.\n\n{\"summary\": \"Credential templates resolved through WorkflowExpression.getComplexParameterValue passed the raw credential data to $self, so an expression-mode value like '={{ ... }}' came back as the raw string and was inserted into the template unresolved. getComplexParameterValue now resolves top-level selfData values that start with '=' (without $self, so there is no recursion) before resolving the template. Added tests for plain and expression-mode $self values.\", \"verification\": \"acdc-test test/workflow-expression.test.ts: 3/3 passed. acdc-typecheck: no errors. acdc-lint did not run: the environment lacks the oxlint-tsgolint executable ('Failed to find tsgolint executable'). The new test was not run against the old code.\", \"tests_pass\": true, \"risks\": [\"Any top-level credential value starting with '=' is now evaluated as an expression, so a literal secret starting with '=' would change; check this matches how core already resolves credential expressions.\", \"Only top-level selfData values are resolved; nested objects or arrays inside credential data are passed through unchanged.\", \"Expression-mode credential values are resolved without $self, so they cannot reference other credential fields.\", \"Lint was not run because tsgolint is missing from the environment; CI needs to run it.\"]}",
+  "cost_usd": 0.28288420000000003,
+  "turns": 20,
+  "tool_calls": 19,
+  "tests_run": 1,
+  "denials": 2,
+  "tokens_in": 248862,
+  "tokens_out": 5608,
+  "model": "claude-opus-5-5",
+  "seconds": 117
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 345,
+   "total": 345
+  },
+  "failing": [
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy $self strips the leading \"=\" from a literal expression-mode value",
+   "packages/workflow/test/workflow-data-proxy.test.ts :: WorkflowDataProxy $self resolves an expression-mode value containing a template"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-expression.ts",
+   "packages/workflow/test/workflow-expression.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-expression.test.ts"
+  ],
+  "lines_changed": 78,
+  "reference_lines": 28,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.08582230455309575,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": null,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-expression.ts b/packages/workflow/src/workflow-expression.ts\nindex 0c15b632b..b0f9a9fda 100644\n--- a/packages/workflow/src/workflow-expression.ts\n+++ b/packages/workflow/src/workflow-expression.ts\n@@ -1,6 +1,7 @@\n import { Expression } from './expression';\n import { isExpression } from './expressions/expression-helpers';\n import type {\n+\tIDataObject,\n \tIExecuteData,\n \tINode,\n \tINodeExecutionData,\n@@ -237,6 +238,28 @@ export class WorkflowExpression {\n \t\tconst connectionInputData: INodeExecutionData[] = [];\n \t\tconst runData = createEmptyRunExecutionData();\n \n+\t\t// Values in `selfData` (e.g. credential data exposed as `$self`) may themselves be\n+\t\t// in expression mode. Resolve them first so `$self.x` returns the resolved value\n+\t\t// instead of the raw `={{ ... }}` string.\n+\t\tconst resolvedSelfData: IDataObject = {};\n+\t\tfor (const [key, value] of Object.entries(selfData as IDataObject)) {\n+\t\t\tresolvedSelfData[key] = isExpression(value)\n+\t\t\t\t? this.resolveSimpleParameterValue(\n+\t\t\t\t\t\tvalue,\n+\t\t\t\t\t\t{},\n+\t\t\t\t\t\trunData,\n+\t\t\t\t\t\trunIndex,\n+\t\t\t\t\t\titemIndex,\n+\t\t\t\t\t\tnode.name,\n+\t\t\t\t\t\tconnectionInputData,\n+\t\t\t\t\t\tmode,\n+\t\t\t\t\t\tadditionalKeys,\n+\t\t\t\t\t\texecuteData,\n+\t\t\t\t\t)\n+\t\t\t\t: value;\n+\t\t}\n+\t\tselfData = resolvedSelfData;\n+\n \t\tconst returnData = this.getParameterValue(\n \t\t\tparameterValue,\n \t\t\trunData,\ndiff --git a/packages/workflow/test/workflow-expression.test.ts b/packages/workflow/test/workflow-expression.test.ts\nindex 1a27cf63d..8d0279a8a 100644\n--- a/packages/workflow/test/workflow-expression.test.ts\n+++ b/packages/workflow/test/workflow-expression.test.ts\n@@ -45,4 +45,59 @@ describe('WorkflowExpression', () => {\n \t\t\texpect(result).toEqual({ key: 'title|display', type: 'display' });\n \t\t});\n \t});\n+\n+\tdescribe('getComplexParameterValue()', () => {\n+\t\tconst nodeTypes = Helpers.NodeTypes();\n+\t\tconst node = {\n+\t\t\tname: 'node',\n+\t\t\ttypeVersion: 1,\n+\t\t\ttype: 'test.set',\n+\t\t\tid: 'uuid-1234',\n+\t\t\tposition: [0, 0] as [number, number],\n+\t\t\tparameters: {},\n+\t\t};\n+\t\tconst workflow = new Workflow({\n+\t\t\tid: '1',\n+\t\t\tnodes: [node],\n+\t\t\tconnections: {},\n+\t\t\tactive: false,\n+\t\t\tnodeTypes,\n+\t\t});\n+\t\tconst expression = workflow.expression;\n+\n+\t\tbeforeAll(async () => {\n+\t\t\tawait expression.acquireIsolate();\n+\t\t});\n+\t\tafterAll(async () => {\n+\t\t\tawait expression.releaseIsolate();\n+\t\t});\n+\n+\t\tit('should resolve plain $self values in a credential template', () => {\n+\t\t\tconst result = expression.getComplexParameterValue(\n+\t\t\t\tnode,\n+\t\t\t\t{ headers: { Authorization: '=Bearer {{$self.token}}' } },\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t\tundefined,\n+\t\t\t\t{ token: 'abc123' },\n+\t\t\t);\n+\n+\t\t\texpect(result).toEqual({ headers: { Authorization: 'Bearer abc123' } });\n+\t\t});\n+\n+\t\tit('should resolve expression-mode $self values in a credential template', () => {\n+\t\t\tconst result = expression.getComplexParameterValue(\n+\t\t\t\tnode,\n+\t\t\t\t{ headers: { Authorization: '=Bearer {{$self.token}}' } },\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t\tundefined,\n+\t\t\t\tundefined,\n+\t\t\t\t{ token: \"={{ 'abc' + '123' }}\" },\n+\t\t\t);\n+\n+\t\t\texpect(result).toEqual({ headers: { Authorization: 'Bearer abc123' } });\n+\t\t});\n+\t});\n });\n"
+ },
+ "evidence": "## fix(core): Resolve expression-mode $self values in credential templates\n\n_The agent gave no summary._\n\n### What changed\n- 1 source file(s), 1 test file(s), 78 changed lines\n- `packages/workflow/src/workflow-expression.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: nothing\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/3; tests that passed before: 345/345\n\n### Risks that remain\n- Change risk: medium (9% chance of a revert or follow-up fix, from n8n's history)\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.28\n"
+}

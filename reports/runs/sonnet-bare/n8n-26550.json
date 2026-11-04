@@ -1,0 +1,82 @@
+{
+ "task": "n8n-26550",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The expression sandbox now returns the Node version from `process.version`; the typecheck error and the lint run are the open items. I confirmed the typecheck error isn't from my edit by its location (line 215, an unrelated `bridge` config property). I haven't re-run it on the unmodified code. The `AGENTS.md` and `CLAUDE.md` deletions in `git status` were already there before I started.\n\n**Cause:** `packages/workflow/src/expression.ts:477` set `version: process.pid`, so `{{ process.version }}` returned the process ID instead of the version string.\n\n**Fix:** it is now `version: process.version`. I added a test in `test/expression.test.ts` that checks `={{process.version}}` equals `process.version`.\n\n**Verification:**\n- `acdc-test test/expression.test.ts` passed all 176 tests.\n- `acdc-typecheck` reports one error, `src/expression.ts(215,5)`: `'bridge'` does not exist in type `EvaluatorConfig`.\n- `acdc-lint` didn't run. It failed with \"Failed to find tsgolint executable\", which is an environment problem.\n\n{\"summary\": \"Fixed expression sandbox exposing process.pid as process.version; now uses process.version. Added a regression test in expression.test.ts.\", \"verification\": \"acdc-test test/expression.test.ts: 176/176 passed. acdc-typecheck reports one error at src/expression.ts:215 ('bridge' not in EvaluatorConfig) in code I didn't touch; I did not confirm it exists without my change. acdc-lint could not run (tsgolint executable missing).\", \"tests_pass\": true, \"risks\": [\"Expressions that relied on the buggy numeric process.version will now get a string such as 'v22.x'.\", \"The typecheck error at expression.ts:215 is unrelated to this change, but I did not check it against the unmodified code.\", \"Lint was not run because of the missing tsgolint executable.\"]}",
+  "cost_usd": 0.0682922,
+  "turns": 11,
+  "tool_calls": 10,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 106430,
+  "tokens_out": 2115,
+  "model": "claude-sonnet-5-5",
+  "seconds": 52
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 169,
+   "total": 169
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 1
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expression.ts",
+   "packages/workflow/test/expression.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/expression.test.ts"
+  ],
+  "lines_changed": 6,
+  "reference_lines": 2,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.18476663329261106,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expression.ts b/packages/workflow/src/expression.ts\nindex 63f09629d..5d81b7dc8 100644\n--- a/packages/workflow/src/expression.ts\n+++ b/packages/workflow/src/expression.ts\n@@ -474,7 +474,7 @@ export class Expression {\n \t\t\t\t\t\tpid: process.pid,\n \t\t\t\t\t\tppid: process.ppid,\n \t\t\t\t\t\trelease: process.release,\n-\t\t\t\t\t\tversion: process.pid,\n+\t\t\t\t\t\tversion: process.version,\n \t\t\t\t\t\tversions: process.versions,\n \t\t\t\t\t}\n \t\t\t\t: {};\ndiff --git a/packages/workflow/test/expression.test.ts b/packages/workflow/test/expression.test.ts\nindex 58fe16e20..d42ac2aac 100644\n--- a/packages/workflow/test/expression.test.ts\n+++ b/packages/workflow/test/expression.test.ts\n@@ -38,6 +38,10 @@ describe('Expression', () => {\n \t\tconst evaluate = (value: string) =>\n \t\t\texpression.getParameterValue(value, null, 0, 0, 'node', [], 'manual', {});\n \n+\t\tit('should expose process.version as the Node.js version string', () => {\n+\t\t\texpect(evaluate('={{process.version}}')).toBe(process.version);\n+\t\t});\n+\n \t\tit('should not be able to use global built-ins from denylist', () => {\n \t\t\texpect(evaluate('={{document}}')).toEqual({});\n \t\t\texpect(evaluate('={{window}}')).toEqual({});\n"
+ },
+ "evidence": "## fix(core): Correct `process.version` in expression sandbox\n\nFixed expression sandbox exposing process.pid as process.version; now uses process.version. Added a regression test in expression.test.ts.\n\n### What changed\n- 1 source file(s), 1 test file(s), 6 changed lines\n- `packages/workflow/src/expression.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/expression.test.ts: 176/176 passed. acdc-typecheck reports one error at src/expression.ts:215 ('bridge' not in EvaluatorConfig) in code I didn't touch; I did not confirm it exists without my change. acdc-lint could not run (tsgolint executable missing).\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 169/169\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- Expressions that relied on the buggy numeric process.version will now get a string such as 'v22.x'.\n- The typecheck error at expression.ts:215 is unrelated to this change, but I did not check it against the unmodified code.\n- Lint was not run because of the missing tsgolint executable.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.07\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The engineer's diff is identical to the merged fix: it changes `version: process.pid` to `version: process.version` in the expression sandbox's process object, which is exactly what the issue asks for. No hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0014340000000000002
+ }
+}

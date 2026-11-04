@@ -1,0 +1,82 @@
+{
+ "task": "n8n-22937",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Negative numbers now parse when an object is given as a string, for example `{a: -1}`. Tests and the type check pass, but the linter did not run.\n\n**Cause:** `parseJSObject` in `packages/workflow/src/utils.ts` walks the esprima AST, and `syntaxNodeToValue` had no case for `UnaryExpression`. A literal like `-1` is a unary minus applied to `1`, so it fell through to `default` and came back as `undefined`.\n\n**Fix:** I added a `UnaryExpression` case to `syntaxNodeToValue`. It handles unary `-` and `+` on numeric operands and returns `undefined` for anything else, as before.\n\n**Test:** I added a case to `test/type-validation.test.ts` with negatives at the top level, in an array and in a nested object. It also covers unary `+`: `{a: -1, b: [-2.5, +3], c: {d: -4}}`.\n\n**Verification:**\n- `acdc-test test/type-validation.test.ts test/utils.test.ts`: 133 tests passed.\n- `acdc-typecheck`: it printed nothing, so I take it as clean.\n- `acdc-lint` failed with \"Failed to find tsgolint executable\", so the changed files are not linted.\n\n{\"summary\": \"Added a UnaryExpression case (unary - and + on numbers) to syntaxNodeToValue in packages/workflow/src/utils.ts. Negative numbers in JS-style object strings previously evaluated to undefined. Added a test case in type-validation.test.ts for negatives at top level, in arrays and in nested objects, plus unary +.\", \"verification\": \"acdc-test on type-validation.test.ts and utils.test.ts: 2 files, 133 tests passed. acdc-typecheck printed nothing, so I take it as clean. acdc-lint did not run: 'Failed to find tsgolint executable'.\", \"tests_pass\": true, \"risks\": [\"Lint was not run because of the missing tsgolint executable in this environment, so run it in CI.\", \"Unary + is now also accepted on numbers, which goes slightly beyond negatives.\", \"Other unary operators (!, ~, typeof) and non-numeric operands still return undefined, as before.\"]}",
+  "cost_usd": 0.079236,
+  "turns": 14,
+  "tool_calls": 13,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 116696,
+  "tokens_out": 3198,
+  "model": "claude-sonnet-5-5",
+  "seconds": 61
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 3,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 208,
+   "total": 208
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/utils.ts",
+   "packages/workflow/test/type-validation.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/type-validation.test.ts"
+  ],
+  "lines_changed": 8,
+  "reference_lines": 7,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.21197384955849238,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/utils.ts b/packages/workflow/src/utils.ts\nindex 5890db241..7d0e2383f 100644\n--- a/packages/workflow/src/utils.ts\n+++ b/packages/workflow/src/utils.ts\n@@ -87,6 +87,13 @@ function syntaxNodeToValue(expression?: SyntaxNode | null): unknown {\n \t\t\treturn expression.value;\n \t\tcase Syntax.ArrayExpression:\n \t\t\treturn expression.elements.map((exp) => syntaxNodeToValue(exp));\n+\t\tcase Syntax.UnaryExpression: {\n+\t\t\tconst argument = syntaxNodeToValue(expression.argument);\n+\t\t\tif (typeof argument !== 'number') return undefined;\n+\t\t\tif (expression.operator === '-') return -argument;\n+\t\t\tif (expression.operator === '+') return argument;\n+\t\t\treturn undefined;\n+\t\t}\n \t\tdefault:\n \t\t\treturn undefined;\n \t}\ndiff --git a/packages/workflow/test/type-validation.test.ts b/packages/workflow/test/type-validation.test.ts\nindex 15dfe1be2..16478bdc5 100644\n--- a/packages/workflow/test/type-validation.test.ts\n+++ b/packages/workflow/test/type-validation.test.ts\n@@ -187,6 +187,7 @@ describe('Type Validation', () => {\n \t\tconst VALID_OBJECTS = [\n \t\t\t['{\"a\": 1}', { a: 1 }],\n \t\t\t['{a: 1}', { a: 1 }],\n+\t\t\t['{a: -1, b: [-2.5, +3], c: {d: -4}}', { a: -1, b: [-2.5, 3], c: { d: -4 } }],\n \t\t\t[\"{'a': '1'}\", { a: '1' }],\n \t\t\t[\"{'\\\\'single quoted\\\\' \\\"double quoted\\\"': 1}\", { '\\'single quoted\\' \"double quoted\"': 1 }],\n \t\t\t['{\"a\": 1, \"b\": { \"c\": 10, \"d\": \"test\"}}', { a: 1, b: { c: 10, d: 'test' } }],\n"
+ },
+ "evidence": "## fix: Allow negative numbers when parsing objects from string\n\nAdded a UnaryExpression case (unary - and + on numbers) to syntaxNodeToValue in packages/workflow/src/utils.ts. Negative numbers in JS-style object strings previously evaluated to undefined. Added a test case in type-validation.test.ts for negatives at top level, in arrays and in nested objects, plus unary +.\n\n### What changed\n- 1 source file(s), 1 test file(s), 8 changed lines\n- `packages/workflow/src/utils.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on type-validation.test.ts and utils.test.ts: 2 files, 133 tests passed. acdc-typecheck printed nothing, so I take it as clean. acdc-lint did not run: 'Failed to find tsgolint executable'.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 3/3; tests that passed before: 208/208\n\n### Risks that remain\n- Change risk: medium (21% chance of a revert or follow-up fix, from n8n's history)\n- Lint was not run because of the missing tsgolint executable in this environment, so run it in CI.\n- Unary + is now also accepted on numbers, which goes slightly beyond negatives.\n- Other unary operators (!, ~, typeof) and non-numeric operands still return undefined, as before.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.08\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change adds UnaryExpression handling so '-' on a number returns its negation, which fixes negative numbers when parsing objects from strings. It differs from the merged fix only on non-numeric operands (returns undefined instead of the value) and on unary '+', and no hidden tests fail, so the behavior is equivalent for the issue's case.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0079167
+ }
+}

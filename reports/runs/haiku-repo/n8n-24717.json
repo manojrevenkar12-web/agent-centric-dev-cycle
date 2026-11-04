@@ -1,0 +1,103 @@
+{
+ "task": "n8n-24717",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I changed the merge check so nested parameters can merge, but I could not finish verification. Bash was denied after my last edit, so the final state of the tests, typecheck, and lint has not been run.\n\n**The cause:** `nodeIsSuperset` in `packages/workflow/src/workflow-diff.ts` compared every non-string parameter value with `!==`. Nested objects and arrays (like IF-node `conditions`) only matched if they were the same reference, so any edit inside them blocked the merge even when it only added data.\n\n**The change:**\n- Added `isValueSuperset` and `isRecordSuperset`. Strings still use `stringContainsParts`. Plain objects must have the same keys, checked recursively. Arrays must have the same length, with each item a superset. Other values must be `isEqual`.\n- `nodeIsSuperset` now delegates to `isRecordSuperset` for `parameters`. The top-level key rule is unchanged, so the existing \"new parameter added → false\" test still holds.\n- Imported `lodash/isPlainObject`.\n\n**Tests (`packages/workflow/test/workflow-diff.test.ts`):**\n- Flipped \"should handle nested node\" from `false` to `true`. Its only change is a string that contains the old value (`'={{ $json.da'` → `'={{ $json.dayOffset }}'`), so it is additive under the existing string rule. Its old `false` was the bug.\n- Added: nested string grows → true; nested object loses a key → false; deep non-string change → false; nested array loses an item → false.\n\n**Verification:**\n- Last run before the final edits: 102 passed, 2 failed. Both failures were my own wrong expectations (a nested new-key case, and the array case that I then fixed in code). I changed the code and the new-key test in response.\n- After the final edits I could not rerun `acdc-test`. The Bash permission was denied, so I did not retry or work around it.\n- `acdc-typecheck` ran but printed no output I could confirm as a pass. `acdc-lint` failed with \"Failed to find tsgolint executable\", so lint has not run successfully.\n- I re-read the final source by hand. It looks right, but that is not a test run.\n\n{\"summary\": \"Nested parameter objects and arrays were compared by reference (`!==`) in nodeIsSuperset, so any change inside them blocked history merging even when additive. Now isValueSuperset/isRecordSuperset recurse into plain objects (same keys) and arrays (same length, element-wise), keeping the string-containment rule for strings and exact equality for other values. Updated the 'should handle nested node' expectation to true and added nested-string, nested-key-loss, nested-array-loss, and deep-value tests.\", \"verification\": \"Before the final edits, acdc-test on workflow-diff.test.ts gave 102 passed / 2 failed (both were wrong test expectations, since fixed). After the final edits, Bash was denied, so acdc-test, acdc-typecheck and acdc-lint were not successfully rerun on the final state; acdc-lint failed earlier with 'Failed to find tsgolint executable'. Source was re-read by hand.\", \"tests_pass\": false, \"risks\": [\"Tests have not been rerun on the final code; run acdc-test, acdc-typecheck and acdc-lint before review.\", \"Arrays are now compared element-wise by position, so reordering or inserting an item is still non-additive. Confirm that is the intended behavior.\", \"The 'should handle nested node' expectation flipped from false to true. This is deliberate, because its only change is string-additive, but it changes existing merge behavior for IF/filter-style conditions.\", \"Top-level and nested objects both require identical key sets, so adding a new nested key still blocks a merge, consistent with the existing top-level test.\", \"Changing non-string comparison from !== to isEqual affects top-level values too, though for primitives the result is identical.\"]}",
+  "cost_usd": 0.01720923,
+  "turns": 20,
+  "tool_calls": 19,
+  "tests_run": 2,
+  "denials": 1,
+  "tokens_in": 473477,
+  "tokens_out": 14190,
+  "model": "claude-haiku-5-5",
+  "seconds": 101
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 30
+  },
+  "pass_to_pass": {
+   "passed": 87,
+   "total": 87
+  },
+  "failing": [
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(42, 42)",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(\"test\", \"test\")",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(\"test\", \"test1\")",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(true, true)",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(42, 43)",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(\"test\", \"different\")",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(true, false)",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(\"abc\", \"a with b and c\")",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset(\"a with b and c\", \"abc\")",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":1,\"b\":\"test\"}, {\"a\":1,\"b\":\"test\"})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":1}, {\"b\":1})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":1}, {\"a\":2})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":\"1\"}, {\"a\":\"12\"})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset([1,2,3], [1,2,3])",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset([1,2], [1,2,3])",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset([1,2,3], [1,2,4])",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":{\"b\":\"test\"}}, {\"a\":{\"b\":\"test with extra\"}})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":{\"b\":\"test with extra\"}}, {\"a\":{\"b\":\"test\"}})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":{\"b\":{\"c\":\"test\"}},\"d\":1}, {\"a\":{\"b\":{\"c\":\"test\"}},\"d\":1})",
+   "packages/workflow/test/workflow-diff.test.ts :: parametersAreSuperset parametersAreSuperset({\"a\":{\"b\":{\"c\":\"test\"}},\"d\":1}, {\"a\":{\"b\":{\"c\":\"different\"}},\"d\":1})"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/workflow-diff.ts",
+   "packages/workflow/test/workflow-diff.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/workflow-diff.test.ts"
+  ],
+  "lines_changed": 93,
+  "reference_lines": 49,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.08582230455309575,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": false,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/workflow-diff.ts b/packages/workflow/src/workflow-diff.ts\nindex 7c5ce7182..f4875eebd 100644\n--- a/packages/workflow/src/workflow-diff.ts\n+++ b/packages/workflow/src/workflow-diff.ts\n@@ -1,4 +1,5 @@\n import isEqual from 'lodash/isEqual';\n+import isPlainObject from 'lodash/isPlainObject';\n import pick from 'lodash/pick';\n \n import type {\n@@ -123,13 +124,42 @@ export function stringContainsParts(s: string, substr: string) {\n \treturn marker >= substr.length;\n }\n \n+function isValueSuperset(prev: unknown, next: unknown): boolean {\n+\tif (typeof prev === 'string' && typeof next === 'string') {\n+\t\t// strings must only be contained in the new string\n+\t\treturn stringContainsParts(next, prev);\n+\t}\n+\tif (isPlainObject(prev) && isPlainObject(next)) {\n+\t\treturn isRecordSuperset(prev as Record<string, unknown>, next as Record<string, unknown>);\n+\t}\n+\tif (Array.isArray(prev) && Array.isArray(next)) {\n+\t\treturn (\n+\t\t\tprev.length === next.length && prev.every((item, i) => isValueSuperset(item, next[i]))\n+\t\t);\n+\t}\n+\t// everything else (numbers, booleans, ...) must be exactly equal to not lose data\n+\treturn isEqual(prev, next);\n+}\n+\n+function isRecordSuperset(prev: Record<string, unknown>, next: Record<string, unknown>): boolean {\n+\tconst keys = Object.keys(prev);\n+\n+\t// abort if keys differ\n+\tif (keys.some((x) => !Object.prototype.hasOwnProperty.call(next, x))) return false;\n+\tif (Object.keys(next).some((x) => !Object.prototype.hasOwnProperty.call(prev, x))) return false;\n+\n+\t// nested objects are compared recursively so that additive changes inside them are allowed\n+\treturn keys.every((key) => isValueSuperset(prev[key], next[key]));\n+}\n+\n /**\n  * Determines whether the second node is a \"superset\" of the first one, i.e. whether no data\n  * is lost if we were to replace `prev` with `next`.\n  *\n  * Specifically this is the case if\n- * - Both nodes have the exact same keys\n- * - All values are either strings where `next.x` contains `prev.x`, or hold the exact same value\n+ * - Both nodes have the exact same keys (recursively for nested objects)\n+ * - All values are either strings where `next.x` contains `prev.x`, arrays of the same length\n+ *   whose items are supersets, or hold the exact same value\n  */\n function nodeIsSuperset<T extends DiffableNode>(prevNode: T, nextNode: T) {\n \tconst { parameters: prevParams, ...prev } = prevNode;\n@@ -138,24 +168,7 @@ function nodeIsSuperset<T extends DiffableNode>(prevNode: T, nextNode: T) {\n \t// abort if the nodes don't match besides parameters\n \tif (!compareNodes({ ...prev, parameters: {} }, { ...next, parameters: {} })) return false;\n \n-\tconst params = Object.keys(prevParams);\n-\n-\t// abort if keys differ\n-\tif (params.some((x) => !Object.prototype.hasOwnProperty.call(nextParams, x))) return false;\n-\tif (Object.keys(nextParams).some((x) => !Object.prototype.hasOwnProperty.call(prevParams, x)))\n-\t\treturn false;\n-\n-\tfor (const key of params) {\n-\t\tconst left = prevParams[key];\n-\t\tconst right = nextParams[key];\n-\t\t// non-strings must be exactly equal to not be lost data\n-\t\tif (typeof left === 'string' && typeof right === 'string') {\n-\t\t\t// strings must only be contained in the new string\n-\t\t\tif (!stringContainsParts(right, left)) return false;\n-\t\t} else if (left !== right) return false;\n-\t}\n-\n-\treturn true;\n+\treturn isRecordSuperset(prevParams, nextParams);\n }\n \n function mergeAdditiveChanges<N extends DiffableNode = DiffableNode>(\ndiff --git a/packages/workflow/test/workflow-diff.test.ts b/packages/workflow/test/workflow-diff.test.ts\nindex 7741b191e..276af6bf2 100644\n--- a/packages/workflow/test/workflow-diff.test.ts\n+++ b/packages/workflow/test/workflow-diff.test.ts\n@@ -590,6 +590,46 @@ describe('groupWorkflows', () => {\n \t\t\t\t\t\t\tname: 'n1',\n \t\t\t\t\t\t},\n \t\t\t\t\t]),\n+\t\t\t\t\texpected: true,\n+\t\t\t\t},\n+\t\t\t\t{\n+\t\t\t\t\tdescription: 'should return true when a nested string grows additively',\n+\t\t\t\t\tbaseWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { options: { a: 'value1' } }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\tnextWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { options: { a: 'some value1 text' } }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\texpected: true,\n+\t\t\t\t},\n+\t\t\t\t{\n+\t\t\t\t\tdescription: 'should return false when a nested object loses a key',\n+\t\t\t\t\tbaseWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { options: { a: 'value1', b: 'value2' } }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\tnextWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { options: { a: 'value1' } }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\texpected: false,\n+\t\t\t\t},\n+\t\t\t\t{\n+\t\t\t\t\tdescription: 'should return false when a nested array loses an item',\n+\t\t\t\t\tbaseWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { conditions: [{ a: 'x' }, { a: 'y' }] }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\tnextWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { conditions: [{ a: 'x' }] }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\texpected: false,\n+\t\t\t\t},\n+\t\t\t\t{\n+\t\t\t\t\tdescription: 'should return false when a deeply nested non-string value changes',\n+\t\t\t\t\tbaseWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { options: { inner: { count: 1 } } }, name: 'n1' },\n+\t\t\t\t\t]),\n+\t\t\t\t\tnextWorkflow: createWorkflow('1', [\n+\t\t\t\t\t\t{ id: '1', parameters: { options: { inner: { count: 2 } } }, name: 'n1' },\n+\t\t\t\t\t]),\n \t\t\t\t\texpected: false,\n \t\t\t\t},\n \t\t\t\t{\n"
+ },
+ "evidence": "## fix(core): Merge additive nested parameters in workflow history optimization\n\nNested parameter objects and arrays were compared by reference (`!==`) in nodeIsSuperset, so any change inside them blocked history merging even when additive. Now isValueSuperset/isRecordSuperset recurse into plain objects (same keys) and arrays (same length, element-wise), keeping the string-containment rule for strings and exact equality for other values. Updated the 'should handle nested node' expectation to true and added nested-string, nested-key-loss, nested-array-loss, and deep-value tests.\n\n### What changed\n- 1 source file(s), 1 test file(s), 93 changed lines\n- `packages/workflow/src/workflow-diff.ts`\n\n### What ran\n- The agent ran the tests 2 time(s) and says: Before the final edits, acdc-test on workflow-diff.test.ts gave 102 passed / 2 failed (both were wrong test expectations, since fixed). After the final edits, Bash was denied, so acdc-test, acdc-typecheck and acdc-lint were not successfully rerun on the final state; acdc-lint failed earlier with 'Failed to find tsgolint executable'. Source was re-read by hand.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/30; tests that passed before: 87/87\n\n### Risks that remain\n- Change risk: medium (9% chance of a revert or follow-up fix, from n8n's history)\n- Tests have not been rerun on the final code; run acdc-test, acdc-typecheck and acdc-lint before review.\n- Arrays are now compared element-wise by position, so reordering or inserting an item is still non-additive. Confirm that is the intended behavior.\n- The 'should handle nested node' expectation flipped from false to true. This is deliberate, because its only change is string-additive, but it changes existing merge behavior for IF/filter-style conditions.\n- Top-level and nested objects both require identical key sets, so adding a new nested key still blocks a merge, consistent with the existing top-level test.\n- Changing non-string comparison from !== to isEqual affects top-level values too, though for primitives the result is identical.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.02\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "underspecified",
+  "reviewer_would_accept": true,
+  "reason": "The change recursively merges additive nested parameters (strings, objects, arrays) as the issue asks, with behaviour equivalent to the merged fix. The hidden tests fail only because they import an exported `parametersAreSuperset` function, a name the issue never mentions, whereas the engineer's helpers are private and named `isValueSuperset` and `isRecordSuperset`.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0204367
+ }
+}

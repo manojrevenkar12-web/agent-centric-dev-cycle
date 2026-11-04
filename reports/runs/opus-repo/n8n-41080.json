@@ -1,0 +1,81 @@
+{
+ "task": "n8n-41080",
+ "setup": "opus-repo",
+ "model": "opus",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Node reference calls now count against the native evaluation work budget. The tests, type check and lint all pass.\n\n**Cause:** `evalNodeRefCall` (`$('X').all()`, `.first()`, `.last()`, `$input.all()`) ran the proxy's function without charging anything. Each of those calls fetches the node's run data again, and `all()` builds a new array of every item. Inside a callback body that happens once per element, for example `$json.many.some(n => $('Source').all().length < n)`. Nothing limited that except the step cap, so the work grew with elements × items while the other per-visit work in the body was already charged.\n\n**Fix** (`packages/workflow/src/expressions/native-evaluation/evaluator.ts`): `evalNodeRefCall` now takes `env` and charges `1 + result.length` (or just 1 when the result isn't an array) after each call. When the budget runs out, the expression is handed to the regular engine, the same as other over-budget work.\n\n**Test** (`packages/workflow/test/native-evaluation-parity.test.ts`): a stub `$` whose `all()` returns 100,000 items, called in a `some` body. With enough elements to pass `MAX_WORK`, the expression is handed to the engine, and the test also checks the call count stays within the budget. With 10 elements it is still handled natively. Without the fix the bail-out case would be handled natively (about 100 visits is well under `MAX_STEPS`), so the assertion would fail. I worked that out rather than running the test against the unfixed code.\n\n**Verification:** `acdc-test packages/workflow/test/native-evaluation-parity.test.ts`: 2 files, 916 tests passed. `acdc-typecheck` showed no errors and `acdc-lint` on both changed files reported 0 warnings and 0 errors.\n\n{\"summary\": \"Node reference calls ($('X').all()/first()/last(), $input.all()) in native evaluation were never charged against the work budget, so a callback body could call them once per element at no cost. evalNodeRefCall now charges 1 unit plus the number of items returned, and goes to the engine when the budget runs out. Added a parity test for the per-visit charge.\", \"verification\": \"acdc-test native-evaluation-parity.test.ts: 916 tests passed (2 files). acdc-typecheck: no errors. acdc-lint on both changed files: 0 warnings, 0 errors. That the new test fails without the fix was worked out, not run against the unfixed code.\", \"tests_pass\": true, \"risks\": [\"The charge is made after the host call returns, so the call that goes over budget still runs once; that matches how other work is charged, but its size isn't checked beforehand\", \"Charging by item count instead of item content size is a choice: all() returns item references, not copies of their JSON\", \"Expressions that call all() over large item sets many times in a loop will now go to the engine instead of being handled natively\"]}",
+  "cost_usd": 0.47033280000000005,
+  "turns": 15,
+  "tool_calls": 14,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 327452,
+  "tokens_out": 5003,
+  "model": "claude-opus-5-5",
+  "seconds": 78
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 457,
+   "total": 457
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expressions/native-evaluation/evaluator.ts",
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-parity.test.ts"
+  ],
+  "lines_changed": 38,
+  "reference_lines": 14,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.16109806008739397,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/expressions/native-evaluation/evaluator.ts b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\nindex 1a3d10954..14cebd58c 100644\n--- a/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n+++ b/packages/workflow/src/expressions/native-evaluation/evaluator.ts\n@@ -363,7 +363,7 @@ function evalReceiver(\n \n function evalCall(node: Extract<SimpleNode, { kind: 'call' }>, env: Env): unknown {\n \tif (node.receiver.kind === 'nodeRef') {\n-\t\treturn evalNodeRefCall(evalReceiver(node, env), node.method);\n+\t\treturn evalNodeRefCall(evalReceiver(node, env), node.method, env);\n \t}\n \n \tif (node.receiver.kind === 'timeRoot') {\n@@ -471,12 +471,18 @@ function evalIterate(node: Extract<SimpleNode, { kind: 'iterate' }>, env: Env):\n  * `first()`, `last()` and `all()` on a node proxy. The proxy hands back a\n  * host function that reads run data for the node the reference names, which\n  * is what the engines call too (the vm bridge routes it through typed RPC).\n+ * Each call resolves the node's run data afresh and `all()` builds a new array\n+ * of its items, so in a callback body the work repeats per visit. Every call is\n+ * charged one unit plus the number of items it returns.\n  */\n-function evalNodeRefCall(proxy: unknown, method: string): unknown {\n+function evalNodeRefCall(proxy: unknown, method: string, env: Env): unknown {\n \tconst fn: unknown = Reflect.get(proxy as object, method);\n \tif (typeof fn !== 'function') throw new EngineFallbackError();\n \n-\treturn bounded(fn.call(proxy));\n+\tconst result: unknown = fn.call(proxy);\n+\tenv.charge(1 + (isArray(result) ? result.length : 0));\n+\n+\treturn bounded(result);\n }\n \n /**\ndiff --git a/packages/workflow/test/native-evaluation-parity.test.ts b/packages/workflow/test/native-evaluation-parity.test.ts\nindex e75209856..0ceb22138 100644\n--- a/packages/workflow/test/native-evaluation-parity.test.ts\n+++ b/packages/workflow/test/native-evaluation-parity.test.ts\n@@ -642,6 +642,32 @@ describe('Expression - fast native evaluation parity', () => {\n \t\t\t).toEqual({ handled: false });\n \t\t});\n \n+\t\t// A node reference call resolves the node's run data on every call, and\n+\t\t// all() returns every item, so a body calling it per element is charged\n+\t\t// for the items each call returns.\n+\t\ttest('node reference calls in a callback body are charged per visit', () => {\n+\t\t\tconst rows = new Array<number>(100_000).fill(0);\n+\t\t\tlet calls = 0;\n+\t\t\tconst $ = () => ({\n+\t\t\t\tall: () => {\n+\t\t\t\t\tcalls++;\n+\t\t\t\t\treturn rows;\n+\t\t\t\t},\n+\t\t\t});\n+\t\t\tconst visits = Math.floor(MAX_WORK / (rows.length + 1));\n+\t\t\tconst expr = \"{{ $json.many.some(n => $('Source').all().length < n) }}\";\n+\n+\t\t\texpect(\n+\t\t\t\tnativeOn(expr, { $, $json: { many: new Array<number>(visits + 1).fill(0) } }),\n+\t\t\t).toEqual({ handled: false });\n+\t\t\texpect(calls).toBeLessThanOrEqual(visits + 1);\n+\n+\t\t\texpect(nativeOn(expr, { $, $json: { many: new Array<number>(10).fill(0) } })).toEqual({\n+\t\t\t\thandled: true,\n+\t\t\t\tvalue: false,\n+\t\t\t});\n+\t\t});\n+\n \t\t// A `$parameter` read resolves a nested expression in its own evaluation,\n \t\t// with its own budgets. Read once per evaluation (as the vm bridge does),\n \t\t// a body cannot resolve it once per element.\n"
+ },
+ "evidence": "## fix(core): Charge node reference calls against the native evaluation work budget (no-changelog)\n\nNode reference calls ($('X').all()/first()/last(), $input.all()) in native evaluation were never charged against the work budget, so a callback body could call them once per element at no cost. evalNodeRefCall now charges 1 unit plus the number of items returned, and goes to the engine when the budget runs out. Added a parity test for the per-visit charge.\n\n### What changed\n- 1 source file(s), 1 test file(s), 38 changed lines\n- `packages/workflow/src/expressions/native-evaluation/evaluator.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test native-evaluation-parity.test.ts: 916 tests passed (2 files). acdc-typecheck: no errors. acdc-lint on both changed files: 0 warnings, 0 errors. That the new test fails without the fix was worked out, not run against the unfixed code.\n- Type check: passes; lint: passes\n- Tests for the issue: 1/1; tests that passed before: 457/457\n\n### Risks that remain\n- Change risk: medium (16% chance of a revert or follow-up fix, from n8n's history)\n- The charge is made after the host call returns, so the call that goes over budget still runs once; that matches how other work is charged, but its size isn't checked beforehand\n- Charging by item count instead of item content size is a choice: all() returns item references, not copies of their JSON\n- Expressions that call all() over large item sets many times in a loop will now go to the engine instead of being handled natively\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.47\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change charges node reference calls against the work budget per call plus per returned item, which is the issue's core ask, and no hidden tests fail. It omits the member-access charge the merged fix added for `.item`/`.json`, but the issue title only names calls, so this is a reasonable reading; charging before bounding is a minor difference.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0119407
+ }
+}

@@ -1,0 +1,82 @@
+{
+ "task": "n8n-29689",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "`getNodeParameters` no longer throws on an unknown key in a `fixedCollection` that allows multiple values. It now skips that key, as the single-value branch already did. The tests pass and the typecheck is clean. The linter did not run.\n\n**Cause:** the `multipleValues: true` branch of `getNodeParameters` in `packages/workflow/src/node-helpers.ts` threw `ApplicationError('Could not find property option')` when a key had no matching option. The single-value branch already ignored such keys.\n\n**Fix:** I moved the option lookup out of the inner loop. If the key is unknown, it now does `continue` instead of throwing. The `ApplicationError` import is still used elsewhere in the file.\n\n**Test:** I added a test in `test/node-helpers.test.ts`. It passes `{known: [...], unknown: [...]}` to a `multipleValues` `fixedCollection` and expects only the `known` entries back.\n\n{\"summary\": \"In getNodeParameters, the multipleValues fixedCollection branch now skips keys with no matching option instead of throwing ApplicationError('Could not find property option'). This matches the single-value branch. Added a regression test.\", \"verification\": \"`acdc-test test/node-helpers.test.ts` passed all 178 tests, including the new one. `acdc-typecheck` printed no errors. `acdc-lint` did not run: it failed with 'Failed to find tsgolint executable', which is a tooling problem in this environment, so lint is unverified. I did not run the rest of the package's tests.\", \"tests_pass\": true, \"risks\": [\"Unknown keys are now dropped silently, so a typo or removed option in saved parameters disappears without any error.\", \"telemetry-helpers.test.ts still mocks a throw of the old error message. That test is harmless but now refers to behavior that no longer occurs.\", \"Lint was not run, so formatting of the new test (for example the line wrapping of the `values` array) is unchecked.\"]}",
+  "cost_usd": 0.1161617,
+  "turns": 16,
+  "tool_calls": 15,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 171720,
+  "tokens_out": 4271,
+  "model": "claude-sonnet-5-5",
+  "seconds": 62
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 1
+  },
+  "pass_to_pass": {
+   "passed": 318,
+   "total": 318
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/node-helpers.ts",
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/node-helpers.test.ts"
+  ],
+  "lines_changed": 51,
+  "reference_lines": 19,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.18476663329261106,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/node-helpers.ts b/packages/workflow/src/node-helpers.ts\nindex d7ae0b95a..f7430f6a9 100644\n--- a/packages/workflow/src/node-helpers.ts\n+++ b/packages/workflow/src/node-helpers.ts\n@@ -929,20 +929,19 @@ export function getNodeParameters(\n \t\t\t\t\tif (typeof propertyValues !== 'object' || Array.isArray(propertyValues)) {\n \t\t\t\t\t\tcontinue;\n \t\t\t\t\t}\n+\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n+\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n+\t\t\t\t\t) as INodePropertyCollection | undefined;\n+\n+\t\t\t\t\t// Skip unknown keys instead of throwing\n+\t\t\t\t\tif (nodePropertyOptions === undefined) {\n+\t\t\t\t\t\tcontinue;\n+\t\t\t\t\t}\n+\n \t\t\t\t\t// Iterate over all items as it contains multiple ones\n \t\t\t\t\tfor (const nodeValue of (propertyValues as INodeParameters)[\n \t\t\t\t\t\titemName\n \t\t\t\t\t] as INodeParameters[]) {\n-\t\t\t\t\t\tnodePropertyOptions = nodeProperties.options!.find(\n-\t\t\t\t\t\t\t(nodePropertyOptions) => nodePropertyOptions.name === itemName,\n-\t\t\t\t\t\t) as INodePropertyCollection;\n-\n-\t\t\t\t\t\tif (nodePropertyOptions === undefined) {\n-\t\t\t\t\t\t\tthrow new ApplicationError('Could not find property option', {\n-\t\t\t\t\t\t\t\textra: { propertyOption: itemName, property: nodeProperties.name },\n-\t\t\t\t\t\t\t});\n-\t\t\t\t\t\t}\n-\n \t\t\t\t\t\ttempNodePropertiesArray = nodePropertyOptions.values!;\n \t\t\t\t\t\ttempValue = getNodeParameters(\n \t\t\t\t\t\t\ttempNodePropertiesArray,\ndiff --git a/packages/workflow/test/node-helpers.test.ts b/packages/workflow/test/node-helpers.test.ts\nindex 2da320a95..7cf088b05 100644\n--- a/packages/workflow/test/node-helpers.test.ts\n+++ b/packages/workflow/test/node-helpers.test.ts\n@@ -3664,6 +3664,38 @@ describe('NodeHelpers', () => {\n \t\t\t\texpect(result).toEqual(testData.output.noneDisplayedTrue.defaultsTrue);\n \t\t\t});\n \t\t}\n+\n+\t\tit('should skip unknown fixedCollection keys (multipleValues) instead of throwing', () => {\n+\t\t\tconst nodeProperties: INodeProperties[] = [\n+\t\t\t\t{\n+\t\t\t\t\tdisplayName: 'Items',\n+\t\t\t\t\tname: 'items',\n+\t\t\t\t\ttype: 'fixedCollection',\n+\t\t\t\t\ttypeOptions: { multipleValues: true },\n+\t\t\t\t\tdefault: {},\n+\t\t\t\t\toptions: [\n+\t\t\t\t\t\t{\n+\t\t\t\t\t\t\tname: 'known',\n+\t\t\t\t\t\t\tdisplayName: 'Known',\n+\t\t\t\t\t\t\tvalues: [\n+\t\t\t\t\t\t\t\t{ displayName: 'Value', name: 'value', type: 'string', default: '' },\n+\t\t\t\t\t\t\t],\n+\t\t\t\t\t\t},\n+\t\t\t\t\t],\n+\t\t\t\t},\n+\t\t\t];\n+\n+\t\t\tconst result = getNodeParameters(\n+\t\t\t\tnodeProperties,\n+\t\t\t\t{ items: { known: [{ value: 'a' }], unknown: [{ value: 'b' }] } },\n+\t\t\t\tfalse,\n+\t\t\t\tfalse,\n+\t\t\t\tnull,\n+\t\t\t\tnull,\n+\t\t\t);\n+\n+\t\t\texpect(result).toEqual({ items: { known: [{ value: 'a' }] } });\n+\t\t});\n \t});\n \n \tdescribe('isSubNodeType', () => {\n"
+ },
+ "evidence": "## fix(core): Skip unknown fixedCollection keys instead of throwing\n\nIn getNodeParameters, the multipleValues fixedCollection branch now skips keys with no matching option instead of throwing ApplicationError('Could not find property option'). This matches the single-value branch. Added a regression test.\n\n### What changed\n- 1 source file(s), 1 test file(s), 51 changed lines\n- `packages/workflow/src/node-helpers.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: `acdc-test test/node-helpers.test.ts` passed all 178 tests, including the new one. `acdc-typecheck` printed no errors. `acdc-lint` did not run: it failed with 'Failed to find tsgolint executable', which is a tooling problem in this environment, so lint is unverified. I did not run the rest of the package's tests.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 1/1; tests that passed before: 318/318\n\n### Risks that remain\n- Change risk: medium (18% chance of a revert or follow-up fix, from n8n's history)\n- Unknown keys are now dropped silently, so a typo or removed option in saved parameters disappears without any error.\n- telemetry-helpers.test.ts still mocks a throw of the old error message. That test is harmless but now refers to behavior that no longer occurs.\n- Lint was not run, so formatting of the new test (for example the line wrapping of the `values` array) is unchecked.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.12\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change is functionally identical to the merged fix: it moves the option lookup out of the inner loop and skips unknown fixedCollection keys with `continue` instead of throwing. The only difference is a more accurate `| undefined` cast and a comment, and no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0098487
+ }
+}

@@ -1,0 +1,84 @@
+{
+ "task": "n8n-41840",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Activation errors caused by a dead credential are now reported at `warning` level instead of `error`. The new tests, the typecheck and the lint all pass.\n\n**Cause:** `WorkflowActivationError.setLevel` only downgraded to `warning` when the message matched a hard-coded list of strings. It never looked at the cause's structured `failure`. A cause with `failure.cause === 'credential-invalid'` therefore got `error` level and was reported.\n\n**Fix:** in `packages/workflow/src/errors/workflow-activation.error.ts`, `setLevel` now takes the original cause. It sets `warning` when that cause has `failure.cause === 'credential-invalid'`. An explicit `level` argument still takes precedence. This check reads `failure` from the original `cause` argument, not from the rebuilt wrapper error, so it doesn't depend on the wrapping step keeping that field.\n\n**Tests:** I added two cases to `test/errors/workflow-activation.error.test.ts`. A `credential-invalid` cause gives `warning`. A `node-defect` cause stays at `error`.\n\n**Verification:**\n- `acdc-test test/errors/workflow-activation.error.test.ts` passed all 12 tests.\n- `acdc-typecheck` reported 0 errors.\n- `acdc-lint` on both changed files reported 0 warnings and 0 errors.\n\nI assumed `warning` level is what keeps these out of error reporting, since that is what the existing string-match cases use. Only `packages/workflow` is checked out, so I didn't confirm that downstream.\n\n{\"summary\": \"WorkflowActivationError now sets level 'warning' when its cause carries failure.cause === 'credential-invalid', so activation errors for credentials that need reconnecting are no longer reported as errors. Added two tests.\", \"verification\": \"acdc-test on workflow-activation.error.test.ts: 12 passed. acdc-typecheck: 0 errors. acdc-lint on the two changed files: 0 warnings, 0 errors.\", \"tests_pass\": true, \"risks\": [\"Assumes 'warning' level is what suppresses reporting downstream (packages outside packages/workflow aren't present to confirm)\", \"The check reads `failure` from the original cause. A cause that is not an ExecutionBaseError and has an unrelated `failure` property would be read the same way\", \"The check duck-types `failure` instead of using a typed accessor, to avoid coupling to a specific error class\"]}",
+  "cost_usd": 0.0630582,
+  "turns": 11,
+  "tool_calls": 10,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 76905,
+  "tokens_out": 2863,
+  "model": "claude-sonnet-5-5",
+  "seconds": 37
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 1,
+   "total": 3
+  },
+  "pass_to_pass": {
+   "passed": 12,
+   "total": 12
+  },
+  "failing": [
+   "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when an error wrapped by the cause declares credential-invalid",
+   "packages/workflow/test/errors/workflow-activation.error.test.ts :: WorkflowActivationError level from the failure the cause declares should set level warning when the cause declares configuration-invalid"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/errors/workflow-activation.error.ts",
+   "packages/workflow/test/errors/workflow-activation.error.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/errors/workflow-activation.error.test.ts"
+  ],
+  "lines_changed": 25,
+  "reference_lines": 24,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.08582230455309575,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/errors/workflow-activation.error.ts b/packages/workflow/src/errors/workflow-activation.error.ts\nindex f6345be94..737c9c43f 100644\n--- a/packages/workflow/src/errors/workflow-activation.error.ts\n+++ b/packages/workflow/src/errors/workflow-activation.error.ts\n@@ -47,15 +47,22 @@ export class WorkflowActivationError extends ExecutionBaseError {\n \t\t\t\t\t? cause.description\n \t\t\t\t\t: cause.message;\n \t\t}\n-\t\tthis.setLevel(level);\n+\t\tthis.setLevel(level, cause);\n \t}\n \n-\tprivate setLevel(level?: ErrorLevel) {\n+\tprivate setLevel(level?: ErrorLevel, cause?: Error) {\n \t\tif (level) {\n \t\t\tthis.level = level;\n \t\t\treturn;\n \t\t}\n \n+\t\t// The user has to reconnect the credential, nothing for us to fix\n+\t\tconst failure = (cause as { failure?: { cause?: unknown } } | undefined)?.failure;\n+\t\tif (failure?.cause === 'credential-invalid') {\n+\t\t\tthis.level = 'warning';\n+\t\t\treturn;\n+\t\t}\n+\n \t\tif (\n \t\t\t[\n \t\t\t\t'etimedout', // Node.js\ndiff --git a/packages/workflow/test/errors/workflow-activation.error.test.ts b/packages/workflow/test/errors/workflow-activation.error.test.ts\nindex ddb4ea7e7..bd0395b21 100644\n--- a/packages/workflow/test/errors/workflow-activation.error.test.ts\n+++ b/packages/workflow/test/errors/workflow-activation.error.test.ts\n@@ -30,6 +30,20 @@ describe('WorkflowActivationError', () => {\n \t\texpect(error.level).toBe('warning');\n \t});\n \n+\tit('should set `level` to `warning` when the cause failure is `credential-invalid`', () => {\n+\t\tconst invalid = Object.assign(new Error('Token expired'), {\n+\t\t\tfailure: { cause: 'credential-invalid' },\n+\t\t});\n+\n+\t\texpect(new WorkflowActivationError('message', { cause: invalid }).level).toBe('warning');\n+\t});\n+\n+\tit('should keep `error` level for other failure causes', () => {\n+\t\tconst defect = Object.assign(new Error('Boom'), { failure: { cause: 'node-defect' } });\n+\n+\t\texpect(new WorkflowActivationError('message', { cause: defect }).level).toBe('error');\n+\t});\n+\n \tit('should surface the cause message in `description`', () => {\n \t\tconst error = new WorkflowActivationError('Generic wrapper message', { cause });\n \n"
+ },
+ "evidence": "## fix(core): Do not report activation errors for credentials that need reconnecting\n\nWorkflowActivationError now sets level 'warning' when its cause carries failure.cause === 'credential-invalid', so activation errors for credentials that need reconnecting are no longer reported as errors. Added two tests.\n\n### What changed\n- 1 source file(s), 1 test file(s), 25 changed lines\n- `packages/workflow/src/errors/workflow-activation.error.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test on workflow-activation.error.test.ts: 12 passed. acdc-typecheck: 0 errors. acdc-lint on the two changed files: 0 warnings, 0 errors.\n- Type check: passes; lint: passes\n- Tests for the issue: 1/3; tests that passed before: 12/12\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (9% chance of a revert or follow-up fix, from n8n's history)\n- Assumes 'warning' level is what suppresses reporting downstream (packages outside packages/workflow aren't present to confirm)\n- The check reads `failure` from the original cause. A cause that is not an ExecutionBaseError and has an unrelated `failure` property would be read the same way\n- The check duck-types `failure` instead of using a typed accessor, to avoid coupling to a specific error class\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.06\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change only handles 'credential-invalid' when `failure` sits directly on the immediate cause. It misses 'configuration-invalid' and failures declared on errors wrapped deeper in the cause chain, both of which the merged fix treats as warnings.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0103427
+ }
+}

@@ -1,0 +1,86 @@
+{
+ "task": "n8n-42923",
+ "setup": "haiku-repo",
+ "model": "haiku",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "Native evaluation is now skipped for any expression in a workflow that contains a Function or FunctionItem node. Those are the vm2-based nodes, and the package has no other vm2 marker to key on.\n\n**The cause:** `Expression.resolveSimpleParameterValue` took the native path whenever native evaluation was on, with no notion of which workflow the expression came from. `WorkflowExpression` has the workflow, but never passed that context down.\n\n**The change:**\n- `src/expression.ts`: `resolveSimpleParameterValue` takes an optional `skipNative` flag (default `false`). When it is set, both the native branch and the native-verify branch are bypassed, so the expression goes through the regular engine pipeline.\n- `src/workflow-expression.ts`: a private `hasVm2SandboxNodes()` checks `workflow.nodes` for `n8n-nodes-base.function` or `n8n-nodes-base.functionItem`, and passes the result as `skipNative`. The check runs per call because `Workflow` nodes can change through `setNodes`, renames and additions.\n- `test/native-evaluation-vm2-skip.test.ts` (new): a plain workflow records one native `handled` result, and a workflow with a Function or FunctionItem node records none. The result is the same either way.\n- `vitest.config.ts`: the new test is added to `ENGINE_TESTS`, because the setup guard requires any test that evaluates expressions to run once per engine.\n\n**Verification:**\n- `acdc-test` on the new suite, metrics, verify, workflow-expression, expression, and workflow-data-proxy tests: 8 files and 852 tests passed, 2 skipped. The new suite passes in the default, vm, legacy and quickjs projects. An earlier quickjs failure was fixed by running each evaluation under `withIsolate`.\n- `acdc-typecheck` passed, and `acdc-lint` reported 0 warnings and 0 errors on the changed files.\n- I ran the native-evaluation suites again after restructuring the `skipNative` condition, and they still pass.\n\n**Decisions for you to check:**\n- I treated Function and FunctionItem as the vm2 nodes. The legacy Code node is not included. If the issue also means the Code node, add `CODE_NODE_TYPE` to `VM2_SANDBOX_NODE_TYPES`.\n- Verify sampling is also disabled for these workflows, which seemed right since the goal is to skip native work there.\n\n{\"summary\": \"Native evaluation ran for every expression, even in workflows that contain vm2-based Function or FunctionItem nodes. Expression.resolveSimpleParameterValue now takes a skipNative flag that disables both the native and native-verify branches. WorkflowExpression sets the flag when workflow.nodes contains a Function or FunctionItem node, checked per call. Added a test suite and registered it in ENGINE_TESTS.\", \"verification\": \"acdc-test on the new native-evaluation-vm2-skip suite, native-evaluation-metrics, native-evaluation-verify, workflow-expression, expression, and workflow-data-proxy tests: 852 passed, 2 skipped, 0 failed (the new suite passes in default, vm, legacy and quickjs projects). acdc-typecheck passed. acdc-lint on the changed files: 0 warnings, 0 errors.\", \"tests_pass\": true, \"risks\": [\"Scope is a judgment call: only Function and FunctionItem are treated as vm2 nodes. The legacy Code node is not included, and it should be added if the issue means it too.\", \"hasVm2SandboxNodes scans all workflow nodes on every expression evaluation. This is O(nodes) per expression and could matter for very large workflows; caching would need invalidation on setNodes, rename and add.\", \"Verify-mode sampling is also skipped for these workflows, so mismatches are no longer reported for them.\", \"Only packages/workflow is present in this checkout, so the change was not checked against the rest of the monorepo (for example, callers of resolveSimpleParameterValue outside this package). The new optional fourth parameter is backward compatible.\"]}",
+  "cost_usd": 0.049319540000000016,
+  "turns": 53,
+  "tool_calls": 52,
+  "tests_run": 6,
+  "denials": 2,
+  "tokens_in": 2061826,
+  "tokens_out": 23179,
+  "model": "claude-haiku-5-5",
+  "seconds": 366
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 4,
+   "total": 6
+  },
+  "pass_to_pass": {
+   "passed": 128,
+   "total": 128
+  },
+  "failing": [
+   "packages/workflow/test/native-evaluation-verify.test.ts :: Expression - native evaluation verify mode in a workflow with a @n8n/n8n-nodes-langchain.code node gives the expression of a later node to the engine in verify mode",
+   "packages/workflow/test/native-evaluation-verify.test.ts :: Expression - native evaluation verify mode in a workflow with a @n8n/n8n-nodes-langchain.code node gives the expression of a later node to the engine while native evaluation is on"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/expression.ts",
+   "packages/workflow/src/workflow-expression.ts",
+   "packages/workflow/test/native-evaluation-vm2-skip.test.ts",
+   "packages/workflow/vitest.config.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/native-evaluation-vm2-skip.test.ts"
+  ],
+  "lines_changed": 117,
+  "reference_lines": 39,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.2560440531164678,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/expression.ts b/packages/workflow/src/expression.ts\nindex 3f7475a34..965cfa878 100644\n--- a/packages/workflow/src/expression.ts\n+++ b/packages/workflow/src/expression.ts\n@@ -837,11 +837,13 @@ export class Expression {\n \t * @param {NodeParameterValue} parameterValue - The parameter value to resolve\n \t * @param {IWorkflowDataProxyData} data - The workflow data proxy data\n \t * @param {boolean} [returnObjectAsString=false] - Whether to convert objects to strings\n+\t * @param {boolean} [skipNative=false] - Keep this expression off the native evaluator, even when it is enabled\n \t */\n \tresolveSimpleParameterValue(\n \t\tparameterValue: NodeParameterValue,\n \t\tdata: IWorkflowDataProxyData,\n \t\treturnObjectAsString = false,\n+\t\tskipNative = false,\n \t): NodeParameterValue | INodeParameters | NodeParameterValue[] | INodeParameters[] {\n \t\t// Check if it is an expression\n \t\tif (!isExpression(parameterValue)) {\n@@ -859,14 +861,15 @@ export class Expression {\n \t\t// engine (isolate). Everything else takes the regular pipeline below.\n \t\t// Verify mode evaluates natively here, then returns the engine's result.\n \t\tlet nativeResult: ExpressionEvaluationOutcome | undefined;\n-\t\tif (Expression.shouldVerifyNative(parameterValue)) {\n+\t\t// `skipNative` keeps workflows with vm2 sandbox nodes on the regular pipeline.\n+\t\tif (!skipNative && Expression.shouldVerifyNative(parameterValue)) {\n \t\t\ttry {\n \t\t\t\tconst native = evaluateNatively(parameterValue, data);\n \t\t\t\tif (native.handled) nativeResult = { ok: true, value: native.value };\n \t\t\t} catch (error) {\n \t\t\t\tnativeResult = { ok: false, error, errorClass: errorClassOf(error) };\n \t\t\t}\n-\t\t} else if (Expression.nativeEvaluation) {\n+\t\t} else if (!skipNative && Expression.nativeEvaluation) {\n \t\t\tconst native = Expression.evaluateNative(parameterValue, data);\n \t\t\tif (native.handled) return this.finalizeResolvedValue(native.value, returnObjectAsString);\n \t\t}\ndiff --git a/packages/workflow/src/workflow-expression.ts b/packages/workflow/src/workflow-expression.ts\nindex 7a0c609b7..3e86a9b31 100644\n--- a/packages/workflow/src/workflow-expression.ts\n+++ b/packages/workflow/src/workflow-expression.ts\n@@ -1,3 +1,4 @@\n+import { FUNCTION_ITEM_NODE_TYPE, FUNCTION_NODE_TYPE } from './constants';\n import { Expression } from './expression';\n import { isExpression } from './expressions/expression-helpers';\n import type {\n@@ -16,6 +17,9 @@ import { createEmptyRunExecutionData } from './run-execution-data-factory';\n import type { Workflow } from './workflow';\n import { WorkflowDataProxy } from './workflow-data-proxy';\n \n+/** Nodes that run their code in the vm2 sandbox. */\n+const VM2_SANDBOX_NODE_TYPES: readonly string[] = [FUNCTION_NODE_TYPE, FUNCTION_ITEM_NODE_TYPE];\n+\n export class WorkflowExpression {\n \tprivate readonly expression: Expression;\n \n@@ -63,7 +67,22 @@ export class WorkflowExpression {\n \t\t);\n \t\tconst data = dataProxy.getDataProxy();\n \n-\t\treturn this.expression.resolveSimpleParameterValue(parameterValue, data, returnObjectAsString);\n+\t\treturn this.expression.resolveSimpleParameterValue(\n+\t\t\tparameterValue,\n+\t\t\tdata,\n+\t\t\treturnObjectAsString,\n+\t\t\tthis.hasVm2SandboxNodes(),\n+\t\t);\n+\t}\n+\n+\t/**\n+\t * Whether the workflow has a node that runs its code in the vm2 sandbox. Native\n+\t * evaluation is skipped for such workflows. Checked per call, because the nodes can change.\n+\t */\n+\tprivate hasVm2SandboxNodes(): boolean {\n+\t\treturn Object.values(this.workflow.nodes).some((node) =>\n+\t\t\tVM2_SANDBOX_NODE_TYPES.includes(node.type),\n+\t\t);\n \t}\n \n \t/**\ndiff --git a/packages/workflow/test/native-evaluation-vm2-skip.test.ts b/packages/workflow/test/native-evaluation-vm2-skip.test.ts\nnew file mode 100644\nindex 000000000..45544261c\n--- /dev/null\n+++ b/packages/workflow/test/native-evaluation-vm2-skip.test.ts\n@@ -0,0 +1,88 @@\n+import type { ObservabilityProvider } from '@n8n/expression-runtime';\n+import { EXPRESSION_METRICS } from '@n8n/expression-runtime';\n+import { mock } from 'vitest-mock-extended';\n+\n+import { nodeTypes } from './ExpressionExtensions/helpers';\n+import { Expression } from '../src/expression';\n+import { FUNCTION_ITEM_NODE_TYPE, FUNCTION_NODE_TYPE } from '../src/constants';\n+import { Workflow } from '../src/workflow';\n+\n+const engine = process.env.N8N_EXPRESSION_ENGINE as 'vm' | 'legacy' | 'quickjs';\n+\n+describe('Expression - native evaluation with vm2 sandbox nodes', () => {\n+\tconst observability = mock<ObservabilityProvider>({\n+\t\tmetrics: { counter: vi.fn(), gauge: vi.fn(), histogram: vi.fn() },\n+\t});\n+\n+\tbeforeAll(async () => {\n+\t\tawait Expression.initExpressionEngine({\n+\t\t\tengine,\n+\t\t\tpoolSize: 1,\n+\t\t\tmaxCodeCacheSize: 1024,\n+\t\t\tbridgeTimeout: 5000,\n+\t\t\tbridgeMemoryLimit: 128,\n+\t\t\tnativeEvaluation: true,\n+\t\t\tobservability,\n+\t\t});\n+\t});\n+\n+\tafterAll(() => {\n+\t\tExpression.setNativeEvaluation(false);\n+\t});\n+\n+\tafterEach(() => {\n+\t\tvi.mocked(observability.metrics.counter).mockClear();\n+\t});\n+\n+\tconst workflowWith = (type: string) =>\n+\t\tnew Workflow({\n+\t\t\tnodes: [\n+\t\t\t\t{\n+\t\t\t\t\tname: 'node',\n+\t\t\t\t\ttypeVersion: 1,\n+\t\t\t\t\ttype: 'test.set',\n+\t\t\t\t\tid: 'uuid-1',\n+\t\t\t\t\tposition: [0, 0],\n+\t\t\t\t\tparameters: {},\n+\t\t\t\t},\n+\t\t\t\t{ name: 'other', typeVersion: 1, type, id: 'uuid-2', position: [0, 0], parameters: {} },\n+\t\t\t],\n+\t\t\tconnections: {},\n+\t\t\tactive: false,\n+\t\t\tnodeTypes,\n+\t\t});\n+\n+\t// The isolate is acquired per workflow, as the engine needs a held bridge.\n+\tconst evaluate = async (workflow: Workflow, value: string) =>\n+\t\tawait workflow.expression.withIsolate(async () =>\n+\t\t\tworkflow.expression.getParameterValue(\n+\t\t\t\tvalue,\n+\t\t\t\tnull,\n+\t\t\t\t0,\n+\t\t\t\t0,\n+\t\t\t\t'node',\n+\t\t\t\t[{ json: { name: 'a' } }],\n+\t\t\t\t'manual',\n+\t\t\t\t{},\n+\t\t\t),\n+\t\t);\n+\n+\ttest('a plain workflow is evaluated natively', async () => {\n+\t\texpect(await evaluate(workflowWith('test.set'), '={{ $json.name }}')).toBe('a');\n+\n+\t\texpect(observability.metrics.counter).toHaveBeenCalledExactlyOnceWith(\n+\t\t\tEXPRESSION_METRICS.nativeEvaluations.name,\n+\t\t\t1,\n+\t\t\t{ result: 'handled', reason: 'none' },\n+\t\t);\n+\t});\n+\n+\ttest.each([\n+\t\t['Function', FUNCTION_NODE_TYPE],\n+\t\t['FunctionItem', FUNCTION_ITEM_NODE_TYPE],\n+\t])('a workflow with a %s node skips native evaluation', async (_label, type) => {\n+\t\texpect(await evaluate(workflowWith(type), '={{ $json.name }}')).toBe('a');\n+\n+\t\texpect(observability.metrics.counter).not.toHaveBeenCalled();\n+\t});\n+});\ndiff --git a/packages/workflow/vitest.config.ts b/packages/workflow/vitest.config.ts\nindex 788d28a2a..85dc71079 100644\n--- a/packages/workflow/vitest.config.ts\n+++ b/packages/workflow/vitest.config.ts\n@@ -22,6 +22,7 @@ const ENGINE_TESTS = [\n \t'test/native-evaluation-metrics.test.ts',\n \t'test/native-evaluation-parity.test.ts',\n \t'test/native-evaluation-verify.test.ts',\n+\t'test/native-evaluation-vm2-skip.test.ts',\n \t'test/webhook-description-fields.test.ts',\n \t'test/workflow.test.ts',\n \t'test/workflow-data-proxy.test.ts',\n"
+ },
+ "evidence": "## fix(core): Skip native evaluation in workflows with vm2 sandbox nodes (no-changelog)\n\nNative evaluation ran for every expression, even in workflows that contain vm2-based Function or FunctionItem nodes. Expression.resolveSimpleParameterValue now takes a skipNative flag that disables both the native and native-verify branches. WorkflowExpression sets the flag when workflow.nodes contains a Function or FunctionItem node, checked per call. Added a test suite and registered it in ENGINE_TESTS.\n\n### What changed\n- 3 source file(s), 1 test file(s), 117 changed lines\n- `packages/workflow/src/expression.ts`\n- `packages/workflow/src/workflow-expression.ts`\n- `packages/workflow/vitest.config.ts`\n\n### What ran\n- The agent ran the tests 6 time(s) and says: acdc-test on the new native-evaluation-vm2-skip suite, native-evaluation-metrics, native-evaluation-verify, workflow-expression, expression, and workflow-data-proxy tests: 852 passed, 2 skipped, 0 failed (the new suite passes in default, vm, legacy and quickjs projects). acdc-typecheck passed. acdc-lint on the changed files: 0 warnings, 0 errors.\n- Type check: passes; lint: passes\n- Tests for the issue: 4/6; tests that passed before: 128/128\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (26% chance of a revert or follow-up fix, from n8n's history)\n- Scope is a judgment call: only Function and FunctionItem are treated as vm2 nodes. The legacy Code node is not included, and it should be added if the issue means it too.\n- hasVm2SandboxNodes scans all workflow nodes on every expression evaluation. This is O(nodes) per expression and could matter for very large workflows; caching would need invalidation on setNodes, rename and add.\n- Verify-mode sampling is also skipped for these workflows, so mismatches are no longer reported for them.\n- Only packages/workflow is present in this checkout, so the change was not checked against the rest of the monorepo (for example, callers of resolveSimpleParameterValue outside this package). The new optional fourth parameter is backward compatible.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.05\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change skips native evaluation only for Function and FunctionItem nodes and omits the langchain Code node (@n8n/n8n-nodes-langchain.code), which also returns vm2 proxies. Workflows containing that node still go through native evaluation, so the hidden tests for it fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.021400699999999998
+ }
+}

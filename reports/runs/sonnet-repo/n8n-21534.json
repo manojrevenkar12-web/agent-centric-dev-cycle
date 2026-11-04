@@ -1,0 +1,85 @@
+{
+ "task": "n8n-21534",
+ "setup": "sonnet-repo",
+ "model": "sonnet",
+ "context": "repo",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "I fixed a bug in `isDomainAllowed` where a wildcard entry like `*.example.com` also allowed lookalike hosts such as `evilexample.com`. The utils tests pass (77 of 77). The linter and type-check didn't run to a result.\n\n**Cause:** the wildcard branch in `packages/workflow/src/utils.ts` cut off the `*.` and checked `hostname.endsWith(\"example.com\")`. That has no dot boundary, so any host ending in those characters matched. The fix keeps the leading dot (`.example.com`), so only real subdomains match. It also ignores a bare `*.` entry.\n\n**Tests:** I added two cases to `packages/workflow/test/utils.test.ts`. One checks that `evilexample.com` and `notexample.com` are blocked by `*.example.com`. The other checks that `example.com` itself is not matched by `*.example.com`.\n\n**Verification:**\n- `acdc-test test/utils.test.ts` passed.\n- `acdc-lint` printed only \"Failed to find tsgolint executable\", so no lint result.\n- `acdc-typecheck` printed nothing that I could read as a pass or fail.\n\nOne behavior change: `*.example.com` used to match the bare `example.com` by accident, and now it doesn't. Anyone relying on that has to list `example.com` separately.\n\n{\"summary\": \"Fixed wildcard domain matching in isDomainAllowed: '*.example.com' used endsWith('example.com') without a dot boundary, so lookalikes like evilexample.com were allowed. It now requires the '.example.com' suffix. Added tests for lookalike hosts and the bare domain.\", \"verification\": \"acdc-test test/utils.test.ts passed (77 of 77). acdc-lint failed to run (tsgolint executable not found). acdc-typecheck printed no output, so I have no result from it.\", \"tests_pass\": true, \"risks\": [\"Behavior change: '*.example.com' no longer matches the bare 'example.com'; users relying on that must list the apex domain explicitly.\", \"Allowed-domain entries are not lowercased, so mixed-case entries won't match (existing behavior, not changed).\", \"Lint and typecheck did not produce a usable result.\"]}",
+  "cost_usd": 0.0724856,
+  "turns": 9,
+  "tool_calls": 8,
+  "tests_run": 1,
+  "denials": 0,
+  "tokens_in": 83029,
+  "tokens_out": 2477,
+  "model": "claude-sonnet-5-5",
+  "seconds": 41
+ },
+ "grade": {
+  "version": 5,
+  "resolved": false,
+  "fail_to_pass": {
+   "passed": 4,
+   "total": 6
+  },
+  "pass_to_pass": {
+   "passed": 163,
+   "total": 163
+  },
+  "failing": [
+   "packages/workflow/test/utils.test.ts :: isDomainAllowed edge cases should be case-insensitive for domains",
+   "packages/workflow/test/utils.test.ts :: isDomainAllowed edge cases should handle trailing dots in hostnames"
+  ],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0,
+   "unavailable": true
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/utils.ts",
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/utils.test.ts"
+  ],
+  "lines_changed": 19,
+  "reference_lines": 20,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.10020668031813111,
+   "tier": "medium"
+  },
+  "mergeable": false,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": true
+  },
+  "diff": "diff --git a/packages/workflow/src/utils.ts b/packages/workflow/src/utils.ts\nindex f3638e9a2..18afcd4dd 100644\n--- a/packages/workflow/src/utils.ts\n+++ b/packages/workflow/src/utils.ts\n@@ -381,8 +381,8 @@ export function isDomainAllowed(\n \t\tfor (const allowedDomain of allowedDomainsList) {\n \t\t\t// Handle wildcard domains (*.example.com)\n \t\t\tif (allowedDomain.startsWith('*.')) {\n-\t\t\t\tconst domainSuffix = allowedDomain.substring(2); // Remove the *. part\n-\t\t\t\tif (hostname.endsWith(domainSuffix)) {\n+\t\t\t\tconst domainSuffix = allowedDomain.substring(1); // Keep the leading dot so only real subdomains match\n+\t\t\t\tif (domainSuffix.length > 1 && hostname.endsWith(domainSuffix)) {\n \t\t\t\t\treturn true;\n \t\t\t\t}\n \t\t\t}\ndiff --git a/packages/workflow/test/utils.test.ts b/packages/workflow/test/utils.test.ts\nindex c948a3fe4..83364e96d 100644\n--- a/packages/workflow/test/utils.test.ts\n+++ b/packages/workflow/test/utils.test.ts\n@@ -534,6 +534,21 @@ describe('isDomainAllowed', () => {\n \t\t\t).toBe(true);\n \t\t});\n \n+\t\tit('should block lookalike domains that merely end with the suffix', () => {\n+\t\t\texpect(\n+\t\t\t\tisDomainAllowed('https://evilexample.com', { allowedDomains: '*.example.com' }),\n+\t\t\t).toBe(false);\n+\t\t\texpect(\n+\t\t\t\tisDomainAllowed('https://notexample.com', { allowedDomains: '*.example.com' }),\n+\t\t\t).toBe(false);\n+\t\t});\n+\n+\t\tit('should not match the bare domain with a wildcard entry', () => {\n+\t\t\texpect(isDomainAllowed('https://example.com', { allowedDomains: '*.example.com' })).toBe(\n+\t\t\t\tfalse,\n+\t\t\t);\n+\t\t});\n+\n \t\tit('should block non-matching domains with wildcards', () => {\n \t\t\texpect(\n \t\t\t\tisDomainAllowed('https://example.org', {\n"
+ },
+ "evidence": "## fix: Improve domain validation\n\nFixed wildcard domain matching in isDomainAllowed: '*.example.com' used endsWith('example.com') without a dot boundary, so lookalikes like evilexample.com were allowed. It now requires the '.example.com' suffix. Added tests for lookalike hosts and the bare domain.\n\n### What changed\n- 1 source file(s), 1 test file(s), 19 changed lines\n- `packages/workflow/src/utils.ts`\n\n### What ran\n- The agent ran the tests 1 time(s) and says: acdc-test test/utils.test.ts passed (77 of 77). acdc-lint failed to run (tsgolint executable not found). acdc-typecheck printed no output, so I have no result from it.\n- Type check: passes; lint: not available for this commit\n- Tests for the issue: 4/6; tests that passed before: 163/163\n- **The agent said the tests pass; the tests for the issue do not.**\n\n### Risks that remain\n- Change risk: medium (10% chance of a revert or follow-up fix, from n8n's history)\n- Behavior change: '*.example.com' no longer matches the bare 'example.com'; users relying on that must list the apex domain explicitly.\n- Allowed-domain entries are not lowercased, so mixed-case entries won't match (existing behavior, not changed).\n- Lint and typecheck did not produce a usable result.\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.07\n",
+ "judge": {
+  "verdict": "partial",
+  "cause": "missed_case",
+  "reviewer_would_accept": false,
+  "reason": "The change fixes the wildcard suffix bug (so evil-example.com no longer matches *.example.com, and the bare domain is excluded), but 'improve domain validation' also implies normalizing hostnames and allowed domains for case and trailing dots, which it does not do. The two failing tests (case-insensitivity and trailing dots) cover exactly those unhandled cases.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0096507
+ }
+}

@@ -1,0 +1,83 @@
+{
+ "task": "n8n-40962",
+ "setup": "sonnet-bare",
+ "model": "sonnet",
+ "context": "bare",
+ "session": {
+  "ok": true,
+  "error": "",
+  "result": "The fix is in and the new tests pass, but I couldn't delete a scratch file I created, so you'll need to remove it.\n\n**Cause:** When a `?.` chain elsewhere in an expression made recast reprint the parent `??` node, it dropped the original parentheses. `x?.y ?? (a||b)` came out as `... ?? a||b`, which is invalid or means something different. Expressions with no `?.` chain were already fine.\n\n**Fix:** I added a small pass in `extendTransform` in `src/extensions/expression-extension.ts`. It marks any `&&` or `||` operand of a `??` as parenthesized before printing.\n\n**Tests:** I added a regression test in `expression-extension.test.ts`. It covers `(a && b) ?? c`, `a ?? (b || c)`, a case with an extension call (`(a || b) ?? c.first()`), and the `?.` chain case.\n\n**Leftover file:** `test/tmp-probe.test.ts` is a scratch file from my debugging. Bash refused `rm` in this session, so I overwrote it with a skipped no-op test. Please delete it before committing.\n\n**Verification:**\n- `acdc-test` on `expression-extension.test.ts` and the leftover scratch file: 2 files and 78 tests passed.\n- `acdc-typecheck`: clean.\n- `acdc-lint` on the changed source and test files: 0 warnings, 0 errors.\n- I only ran that one test file, not the whole package suite.\n\n{\"summary\": \"Fixed extendTransform dropping parentheses around &&/|| operands of ?? when recast reprinted a node modified by the optional-chaining transform (e.g. `x?.y ?? (a||b)` became `... ?? a||b`). Added a visitor before print() that sets extra.parenthesized on such operands, plus a regression test.\", \"verification\": \"acdc-test on expression-extension.test.ts plus the leftover scratch test: 2 files, 78 tests passed. acdc-typecheck clean. acdc-lint on the changed source and test files: 0 warnings, 0 errors. Did not run the full package suite.\", \"tests_pass\": true, \"risks\": [\"Relies on recast honoring node.extra.parenthesized, which is recast-version-specific behavior\", \"Parentheses are now forced on all &&/|| operands of ??, so printed output may include redundant but harmless parens\", \"Scratch file test/tmp-probe.test.ts (now a skipped no-op) could not be deleted because rm was denied and must be removed manually\"]}",
+  "cost_usd": 0.1287563,
+  "turns": 19,
+  "tool_calls": 18,
+  "tests_run": 4,
+  "denials": 2,
+  "tokens_in": 176192,
+  "tokens_out": 4836,
+  "model": "claude-sonnet-5-5",
+  "seconds": 91
+ },
+ "grade": {
+  "version": 5,
+  "resolved": true,
+  "fail_to_pass": {
+   "passed": 5,
+   "total": 5
+  },
+  "pass_to_pass": {
+   "passed": 240,
+   "total": 240
+  },
+  "failing": [],
+  "typecheck": {
+   "ok": true,
+   "errors": [],
+   "preexisting": 0
+  },
+  "lint": {
+   "ok": true,
+   "problems": 0,
+   "preexisting": 0
+  },
+  "ci_pass": true,
+  "files": [
+   "packages/workflow/src/extensions/expression-extension.ts",
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts",
+   "packages/workflow/test/tmp-probe.test.ts"
+  ],
+  "outside_package": [],
+  "test_files_changed": [
+   "packages/workflow/test/ExpressionExtensions/expression-extension.test.ts",
+   "packages/workflow/test/tmp-probe.test.ts"
+  ],
+  "lines_changed": 30,
+  "reference_lines": 17,
+  "policy": {
+   "level": "agent_reviewed",
+   "allowed": true,
+   "reasons": [
+    "category bugfix: at most agent_reviewed"
+   ],
+   "requiredTeams": {}
+  },
+  "risk": {
+   "p": 0.14476142288605784,
+   "tier": "medium"
+  },
+  "mergeable": true,
+  "claim": {
+   "tests_pass": true,
+   "overclaim": false
+  },
+  "diff": "diff --git a/packages/workflow/src/extensions/expression-extension.ts b/packages/workflow/src/extensions/expression-extension.ts\nindex 9b2dd1a4c..1cec30401 100644\n--- a/packages/workflow/src/extensions/expression-extension.ts\n+++ b/packages/workflow/src/extensions/expression-extension.ts\n@@ -431,6 +431,23 @@ export const extendTransform = (expression: string): { code: string } | undefine\n \t\t\t},\n \t\t});\n \n+\t\t// Mixing `??` with `&&`/`||` without parentheses is a syntax error, and recast\n+\t\t// can drop the original parentheses when it reprints a modified parent node.\n+\t\tvisit(ast, {\n+\t\t\tvisitLogicalExpression(path) {\n+\t\t\t\tthis.traverse(path);\n+\n+\t\t\t\tif (path.node.operator === '??') {\n+\t\t\t\t\tfor (const side of [path.node.left, path.node.right]) {\n+\t\t\t\t\t\tif (side.type === 'LogicalExpression' && side.operator !== '??') {\n+\t\t\t\t\t\t\tconst node = side as { extra?: { parenthesized?: boolean } };\n+\t\t\t\t\t\t\tnode.extra = { ...node.extra, parenthesized: true };\n+\t\t\t\t\t\t}\n+\t\t\t\t\t}\n+\t\t\t\t}\n+\t\t\t},\n+\t\t});\n+\n \t\treturn print(ast);\n \t} catch (e) {\n \t\treturn;\ndiff --git a/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts b/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\nindex 2361173be..6113d31ad 100644\n--- a/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\n+++ b/packages/workflow/test/ExpressionExtensions/expression-extension.test.ts\n@@ -136,6 +136,15 @@ describe('Expression Parser', () => {\n \t});\n \n \tdescribe('Test newer ES syntax', () => {\n+\t\ttest('Keeps parentheses around && and || operands of ??', () => {\n+\t\t\texpect(extendTransform('(a && b) ?? c')?.code).toBe('(a && b) ?? c');\n+\t\t\texpect(extendTransform('a ?? (b || c)')?.code).toBe('a ?? (b || c)');\n+\t\t\texpect(extendTransform('(a || b) ?? c.first()')?.code).toBe(\n+\t\t\t\t'(a || b) ?? extend(c, \"first\", [])',\n+\t\t\t);\n+\t\t\texpect(extendTransform('x?.y ?? (a||b)')?.code).toMatch(/\\?\\? \\(a \\|\\| b\\)$/);\n+\t\t});\n+\n \t\ttest('Optional chaining transforms', () => {\n \t\t\texpect(extendTransform('$json.something?.test.funcCall()')?.code).toBe(\n \t\t\t\t'window.chainCancelToken1 = ((window.chainValue1 = $json.something) ?? undefined) === undefined, window.chainCancelToken1 === true ? undefined : window.chainValue1.test.funcCall();',\ndiff --git a/packages/workflow/test/tmp-probe.test.ts b/packages/workflow/test/tmp-probe.test.ts\nnew file mode 100644\nindex 000000000..46661835b\n--- /dev/null\n+++ b/packages/workflow/test/tmp-probe.test.ts\n@@ -0,0 +1,4 @@\n+import { it } from 'vitest';\n+\n+// Scratch file left by mistake; safe to delete.\n+it.skip('probe', () => {});\n"
+ },
+ "evidence": "## fix(core): Keep parentheses around && and || operands of ?? in expressions\n\nFixed extendTransform dropping parentheses around &&/|| operands of ?? when recast reprinted a node modified by the optional-chaining transform (e.g. `x?.y ?? (a||b)` became `... ?? a||b`). Added a visitor before print() that sets extra.parenthesized on such operands, plus a regression test.\n\n### What changed\n- 1 source file(s), 2 test file(s), 30 changed lines\n- `packages/workflow/src/extensions/expression-extension.ts`\n\n### What ran\n- The agent ran the tests 4 time(s) and says: acdc-test on expression-extension.test.ts plus the leftover scratch test: 2 files, 78 tests passed. acdc-typecheck clean. acdc-lint on the changed source and test files: 0 warnings, 0 errors. Did not run the full package suite.\n- Type check: passes; lint: passes\n- Tests for the issue: 5/5; tests that passed before: 240/240\n\n### Risks that remain\n- Change risk: medium (14% chance of a revert or follow-up fix, from n8n's history)\n- Relies on recast honoring node.extra.parenthesized, which is recast-version-specific behavior\n- Parentheses are now forced on all &&/|| operands of ??, so printed output may include redundant but harmless parens\n- Scratch file test/tmp-probe.test.ts (now a skipped no-op) could not be deleted because rm was denied and must be removed manually\n\n### Where a person decides\n- Autonomy level: **agent reviewed**\n- category bugfix: at most agent_reviewed\n\n- Agent cost: $0.13\n",
+ "judge": {
+  "verdict": "solves",
+  "cause": "none",
+  "reviewer_would_accept": true,
+  "reason": "The change adds the same post-pass visitor as the merged fix: for `??` nodes it marks `&&`/`||` operands with `extra.parenthesized = true` so recast keeps the parentheses. The only difference is that it uses a typed cast and spread instead of Object.assign, which behaves equivalently, and no hidden tests fail.",
+  "model": "claude-sonnet-5-5",
+  "cost_usd": 0.0089627
+ }
+}
